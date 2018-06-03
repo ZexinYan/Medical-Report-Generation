@@ -75,6 +75,6 @@ def main(json_file, threshold, vocab_path):
 
 
 if __name__ == '__main__':
-    main(json_file='../data/debugging_captions.json',
-         threshold=0,
-         vocab_path='../data/debugging_vocab.pkl')
+    main(json_file='../data/captions.json',
+         threshold=10,
+         vocab_path='../data/vocab.pkl')

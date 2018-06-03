@@ -21,14 +21,14 @@ class CaptionSampler(object):
         self.vocab = self.__init_vocab()
         self.tagger = self.__init_tagger()
         self.transform = self.__init_transform()
-        self.data_loader = self.__init_data_loader(self.args.test_file_lits)
+        self.data_loader = self.__init_data_loader(self.args.file_lits)
         self.model_state_dict = self.__load_mode_state_dict()
 
         self.extractor = self.__init_visual_extractor()
         self.mlc = self.__init_mlc()
         self.co_attention = self.__init_co_attention()
-        self.sentence_model = self.__init_sentence_lstm()
-        self.word_model = self.__init_word_lstm()
+        self.sentence_model = self.__init_sentence_model()
+        self.word_model = self.__init_word_word()
 
         self.ce_criterion = self._init_ce_criterion()
         self.mse_criterion = self._init_mse_criterion()
@@ -43,66 +43,56 @@ class CaptionSampler(object):
 
     def test(self):
         tag_loss, stop_loss, word_loss, loss = 0, 0, 0, 0
-        self.extractor.eval()
-        self.mlc.eval()
-        self.co_attention.eval()
-        self.sentence_model.eval()
-        self.word_model.eval()
+        self.extractor.train()
+        self.mlc.train()
+        self.co_attention.train()
+        self.sentence_model.train()
+        self.word_model.train()
 
-        for i, (images, _, label, captions, prob) in enumerate(self.data_loader):
+        progress_bar = tqdm(self.data_loader, desc='Testing')
+
+        for images, _, label, captions, prob in progress_bar:
             batch_tag_loss, batch_stop_loss, batch_word_loss, batch_loss = 0, 0, 0, 0
             images = self.__to_var(images, requires_grad=False)
+
             visual_features = self.extractor.forward(images)
             tags, semantic_features = self.mlc.forward(visual_features)
 
             batch_tag_loss = self.mse_criterion(tags, self.__to_var(label, requires_grad=False)).sum()
 
             sentence_states = None
-            prev_hidden_states = self.__to_var(torch.zeros(images.shape[0], 1, 512))
+            prev_hidden_states = self.__to_var(torch.zeros(images.shape[0], 1, self.args.hidden_size))
+
             context = self.__to_var(torch.Tensor(captions).long(), requires_grad=False)
             prob_real = self.__to_var(torch.Tensor(prob).long(), requires_grad=False)
 
             for sentence_index in range(captions.shape[1]):
                 ctx = self.co_attention.forward(visual_features, semantic_features, prev_hidden_states)
-                topic, p_stop, hidden_state, sentence_states = self.sentence_model.forward(ctx,
-                                                                                           prev_hidden_states,
-                                                                                           sentence_states)
+                topic, p_stop, hidden_states, sentence_states = self.sentence_model.forward(ctx,
+                                                                                            prev_hidden_states,
+                                                                                            sentence_states)
                 batch_stop_loss += self.ce_criterion(p_stop.squeeze(), prob_real[:, sentence_index]).sum()
-
                 # Debugging...
                 # print("Real Stop: {}".format(prob[:, sentence_index]))
                 # print("Pred Stop: {}".format(p_stop))
-                # print("")
-
-                for word_index in range(1, captions.shape[2] - 1):
-                    # context = self._to_var(torch.Tensor(captions[:, sentence_index, :word_index]).long(),
-                    #                        requires_grad=False)
-                    # real_word = self._to_var(torch.Tensor(captions[:, sentence_index, word_index]).long(),
-                    #                          requires_grad=False)
-                    # word_mask = self._to_var((torch.Tensor(captions[:, sentence_index, word_index]) > 0).float(),
-                    #                          requires_grad=True)
+                # print()
+                for word_index in range(1, captions.shape[2]):
                     words = self.word_model.forward(topic, context[:, sentence_index, :word_index])
-
                     # Debugging...
-                    print("Context:{}".format(context[:, sentence_index, :word_index]))
-                    print("Pred:{}".format(torch.max(words.squeeze(1), 1)[1]))
-                    print("Real:{}".format(context[:, sentence_index, word_index]))
-                    print("")
+                    # print("Context:{}".format(context[:, 0, :word_index]))
+                    # print("word index: {}".format(word_index))
+                    # print("Pred: {}".format(torch.max(words.squeeze(1), 1)[1]))
+                    # print("Real: {}".format(context[:, sentence_index, word_index]))
+                    # print()
                     batch_word_loss += (self.ce_criterion(words, context[:, sentence_index, word_index])).sum()
-                prev_hidden_states = hidden_state
-            #
-            batch_loss = self.args.lambda_tag * batch_tag_loss.data \
-                         + self.args.lambda_stop * batch_stop_loss.data \
-                         + self.args.lambda_word * batch_word_loss.data
+            batch_loss = self.args.lambda_tag * batch_tag_loss \
+                         + self.args.lambda_stop * batch_stop_loss \
+                         + self.args.lambda_word * batch_word_loss
 
-            tag_loss += batch_tag_loss.data
-            stop_loss += batch_stop_loss.data
-            word_loss += batch_word_loss.data
+            tag_loss += self.args.lambda_tag * batch_tag_loss.data
+            stop_loss += self.args.lambda_stop * batch_stop_loss.data
+            word_loss += self.args.lambda_word * batch_word_loss.data
             loss += batch_loss.data
-
-            # print("tag loss:{}".format(batch_tag_loss))
-            # print("stop loss:{}".format(batch_stop_loss))
-            # print("word loss:{}".format(batch_word_loss))
 
         return tag_loss, stop_loss, word_loss, loss
 
@@ -110,11 +100,11 @@ class CaptionSampler(object):
         progress_bar = tqdm(self.data_loader, desc='Sampling')
         results = {}
 
-        self.extractor.eval()
-        self.mlc.eval()
-        self.co_attention.eval()
-        self.sentence_model.eval()
-        self.word_model.eval()
+        self.extractor.train()
+        self.mlc.train()
+        self.co_attention.train()
+        self.sentence_model.train()
+        self.word_model.train()
 
         for images, image_id, label, captions, _ in progress_bar:
             images = self.__to_var(images, requires_grad=False)
@@ -122,7 +112,7 @@ class CaptionSampler(object):
             tags, semantic_features = self.mlc.forward(visual_features)
 
             sentence_states = None
-            prev_hidden_states = self.__to_var(torch.zeros(images.shape[0], 1, 512))
+            prev_hidden_states = self.__to_var(torch.zeros(images.shape[0], 1, self.args.hidden_size))
             pred_sentences = {}
             real_sentences = {}
             for i in image_id:
@@ -172,6 +162,7 @@ class CaptionSampler(object):
         try:
             model_state_dict = torch.load(self.args.load_model_path)
             print("[Load Model-{} Succeed!]".format(self.args.load_model_path))
+            print("Load From Epoch {}".format(model_state_dict['epoch']))
             return model_state_dict
         except Exception as err:
             print("[Load Model Failed] {}".format(err))
@@ -186,7 +177,7 @@ class CaptionSampler(object):
             word = self.vocab.get_word_by_id(word_id)
             if word == '<start>':
                 continue
-            if word == '<end>':
+            if word == '<end>' or word == '':
                 break
             sampled_caption.append(word)
         return ' '.join(sampled_caption)
@@ -222,9 +213,10 @@ class CaptionSampler(object):
         return Variable(x, requires_grad=requires_grad)
 
     def __init_visual_extractor(self):
-        model = VisualFeatureExtractor()
+        model = VisualFeatureExtractor(pretrained=False)
 
         if self.model_state_dict is not None:
+            print("Visual Extractor Loaded!")
             model.load_state_dict(self.model_state_dict['extractor'])
 
         if self.args.cuda:
@@ -234,11 +226,11 @@ class CaptionSampler(object):
     def __init_mlc(self):
         model = MLC(classes=self.args.classes,
                     sementic_features_dim=self.args.sementic_features_dim,
-                    kernel_size=self.args.kernel_size,
-                    fc_in_features=self.args.fc_in_features,
+                    fc_in_features=self.extractor.out_features,
                     k=self.args.k)
 
         if self.model_state_dict is not None:
+            print("MLC Loaded!")
             model.load_state_dict(self.model_state_dict['mlc'])
 
         if self.args.cuda:
@@ -248,34 +240,37 @@ class CaptionSampler(object):
     def __init_co_attention(self):
         model = CoAttention(embed_size=self.args.embed_size,
                             hidden_size=self.args.hidden_size,
-                            visual_size=self.args.visual_size)
+                            visual_size=self.extractor.out_features)
 
         if self.model_state_dict is not None:
+            print("Co-Attention Loaded!")
             model.load_state_dict(self.model_state_dict['co_attention'])
 
         if self.args.cuda:
             model = model.cuda()
         return model
 
-    def __init_sentence_lstm(self):
+    def __init_sentence_model(self):
         model = SentenceLSTM(embed_size=self.args.embed_size,
                              hidden_size=self.args.hidden_size,
                              num_layers=self.args.sentence_num_layers)
 
         if self.model_state_dict is not None:
+            print("Sentence Model Loaded!")
             model.load_state_dict(self.model_state_dict['sentence_model'])
 
         if self.args.cuda:
             model = model.cuda()
         return model
 
-    def __init_word_lstm(self):
+    def __init_word_word(self):
         model = WordLSTM(vocab_size=len(self.vocab),
                          embed_size=self.args.embed_size,
                          hidden_size=self.args.hidden_size,
                          num_layers=self.args.word_num_layers)
 
         if self.model_state_dict is not None:
+            print("Word Model Loaded!")
             model.load_state_dict(self.model_state_dict['word_model'])
 
         if self.args.cuda:
@@ -283,7 +278,7 @@ class CaptionSampler(object):
         return model
 
 if __name__ == '__main__':
-    model_dir = './report_models/debugging_word_less_vocab/20180525-15:56:45'
+    model_dir = './report_models/only_training/20180528-02:44:52'
 
     import warnings
     warnings.filterwarnings("ignore")
@@ -294,19 +289,19 @@ if __name__ == '__main__':
                         help='size for resizing images')
     parser.add_argument('--pretrained', action='store_true', default=False,
                         help='not using pretrained model when training')
-    parser.add_argument('--vocab_path', type=str, default='./data/debugging_vocab.pkl',
+    parser.add_argument('--vocab_path', type=str, default='./data/vocab.pkl',
                         help='the path for vocabulary object')
     parser.add_argument('--image_dir', type=str, default='./data/images',
                         help='the path for images')
-    parser.add_argument('--caption_json', type=str, default='./data/debugging_captions.json',
+    parser.add_argument('--caption_json', type=str, default='./data/captions.json',
                         help='path for captions')
-    parser.add_argument('--test_file_lits', type=str, default='./data/debugging.txt',
+    parser.add_argument('--file_lits', type=str, default='./data/val_data.txt',
                         help='the path for test file list')
-    parser.add_argument('--load_model_path', type=str, default=os.path.join(model_dir, 'best_loss.pth.tar'),
+    parser.add_argument('--load_model_path', type=str, default=os.path.join(model_dir, 'best_stop.pth.tar'),
                         help='The path of loaded model')
     parser.add_argument('--result_path', type=str, default=os.path.join(model_dir, 'results'),
                         help='the path for storing results')
-    parser.add_argument('--result_name', type=str, default='word_test',
+    parser.add_argument('--result_name', type=str, default='train',
                         help='the name of results')
 
     parser.add_argument('--classes', type=int, default=156)
@@ -318,9 +313,9 @@ if __name__ == '__main__':
     parser.add_argument('--hidden_size', type=int, default=512)
     parser.add_argument('--visual_size', type=int, default=49)
     parser.add_argument('--sentence_num_layers', type=int, default=2)
-    parser.add_argument('--word_num_layers', type=int, default=2)
+    parser.add_argument('--word_num_layers', type=int, default=1)
 
-    parser.add_argument('--s_max', type=int, default=2)
+    parser.add_argument('--s_max', type=int, default=6)
     parser.add_argument('--n_max', type=int, default=30)
 
     parser.add_argument('--batch_size', type=int, default=16)

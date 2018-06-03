@@ -19,7 +19,11 @@ class DenseNet121(nn.Module):
             # nn.Sigmoid()
         )
 
-    def forward(self, x):
+    def forward(self, x) -> object:
+        """
+
+        :rtype: object
+        """
         x = self.densenet121(x)
         return x
 
@@ -39,7 +43,11 @@ class DenseNet161(nn.Module):
         func.weight.data.normal_(0, 0.01)
         return func
 
-    def forward(self, x):
+    def forward(self, x) -> object:
+        """
+
+        :rtype: object
+        """
         x = self.model(x)
         return x
 
@@ -59,7 +67,11 @@ class DenseNet169(nn.Module):
         func.weight.data.normal_(0, 0.01)
         return func
 
-    def forward(self, x):
+    def forward(self, x) -> object:
+        """
+
+        :rtype: object
+        """
         x = self.model(x)
         return x
 
@@ -79,7 +91,11 @@ class DenseNet201(nn.Module):
         func.weight.data.normal_(0, 0.01)
         return func
 
-    def forward(self, x):
+    def forward(self, x) -> object:
+        """
+
+        :rtype: object
+        """
         x = self.model(x)
         return x
 
@@ -99,7 +115,11 @@ class ResNet18(nn.Module):
         func.weight.data.normal_(0, 0.01)
         return func
 
-    def forward(self, x):
+    def forward(self, x) -> object:
+        """
+
+        :rtype: object
+        """
         x = self.model(x)
         return x
 
@@ -119,7 +139,11 @@ class ResNet34(nn.Module):
         func.weight.data.normal_(0, 0.01)
         return func
 
-    def forward(self, x):
+    def forward(self, x) -> object:
+        """
+
+        :rtype: object
+        """
         x = self.model(x)
         return x
 
@@ -139,7 +163,11 @@ class ResNet50(nn.Module):
         func.weight.data.normal_(0, 0.01)
         return func
 
-    def forward(self, x):
+    def forward(self, x) -> object:
+        """
+
+        :rtype: object
+        """
         x = self.model(x)
         return x
 
@@ -159,7 +187,11 @@ class ResNet101(nn.Module):
         func.weight.data.normal_(0, 0.01)
         return func
 
-    def forward(self, x):
+    def forward(self, x) -> object:
+        """
+
+        :rtype: object
+        """
         x = self.model(x)
         return x
 
@@ -179,7 +211,11 @@ class ResNet152(nn.Module):
         func.weight.data.normal_(0, 0.01)
         return func
 
-    def forward(self, x):
+    def forward(self, x) -> object:
+        """
+
+        :rtype: object
+        """
         x = self.model(x)
         return x
 
@@ -204,7 +240,11 @@ class VGG19(nn.Module):
         func.weight.data.normal_(0, 0.01)
         return func
 
-    def forward(self, x):
+    def forward(self, x) -> object:
+        """
+
+        :rtype: object
+        """
         x = self.model(x)
         return x
 
@@ -226,7 +266,11 @@ class VGG(nn.Module):
             self.fc.weight.data.normal_(0, 0.01)
             self.fc.bias.data.fill_(0)
 
-    def forward(self, images):
+    def forward(self, images) -> object:
+        """
+
+        :rtype: object
+        """
         visual_feats = self.vgg19.features(images)
         tags_classifier = visual_feats.view(visual_feats.size(0), -1)
         tags_classifier = self.bn(self.fc(self.classifier(tags_classifier)))
@@ -248,7 +292,11 @@ class InceptionV3(nn.Module):
         func.weight.data.normal_(0, 0.01)
         return func
 
-    def forward(self, x):
+    def forward(self, x) -> object:
+        """
+
+        :rtype: object
+        """
         x = self.model(x)
         return x
 
@@ -263,7 +311,11 @@ class CheXNetDenseNet121(nn.Module):
             nn.Sigmoid()
         )
 
-    def forward(self, x):
+    def forward(self, x) -> object:
+        """
+
+        :rtype: object
+        """
         x = self.densenet121(x)
         return x
 
@@ -284,7 +336,11 @@ class CheXNet(nn.Module):
         func.weight.data.normal_(0, 0.01)
         return func
 
-    def forward(self, x):
+    def forward(self, x) -> object:
+        """
+
+        :rtype: object
+        """
         x = self.densenet121(x)
         return x
 
@@ -341,7 +397,11 @@ class EncoderCNN(nn.Module):
         self.linear.weight.data.normal_(0.0, 0.01)
         self.linear.bias.data.fill_(0)
 
-    def forward(self, images):
+    def forward(self, images) -> object:
+        """
+
+        :rtype: object
+        """
         features = self.resnet(images)
         features = Variable(features.data)
         features = features.view(features.size(0), -1)
@@ -363,7 +423,11 @@ class DecoderRNN(nn.Module):
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
 
-    def forward(self, features, captions):
+    def forward(self, features, captions) -> object:
+        """
+
+        :rtype: object
+        """
         embeddings = self.embed(captions)
         embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         hidden, _ = self.lstm(embeddings)
@@ -396,7 +460,11 @@ class VisualFeatureExtractor(nn.Module):
         self.resnet = nn.Sequential(*modules)
         self.out_features = resnet.fc.in_features
 
-    def forward(self, images):
+    def forward(self, images) -> object:
+        """
+
+        :rtype: object
+        """
         features = self.resnet(images)
         features = features.view(features.size(0), -1)
         return features
@@ -410,7 +478,11 @@ class MLC(nn.Module):
         self.k = k
         self.softmax = nn.Softmax()
 
-    def forward(self, visual_features):
+    def forward(self, visual_features) -> object:
+        """
+
+        :rtype: object
+        """
         tags = self.softmax(self.classifier(visual_features))
         semantic_features = self.embed(torch.topk(tags, self.k)[1])
         return tags, semantic_features
@@ -419,45 +491,50 @@ class MLC(nn.Module):
 class CoAttention(nn.Module):
     def __init__(self, embed_size=512, hidden_size=512, visual_size=2048):
         super(CoAttention, self).__init__()
-        self.linear = nn.Linear(in_features=visual_size, out_features=embed_size, bias=True)
-        self.bn = nn.BatchNorm1d(num_features=embed_size, momentum=0.01)
-        # self.W_v_h = nn.Linear(in_features=hidden_size, out_features=embed_size, bias=True)
-        # self.bn_v_h = nn.BatchNorm1d(num_features=1, momentum=0.01)
-        #
-        # self.W_v = nn.Linear(in_features=visual_size, out_features=embed_size, bias=True)
-        # self.bn_v = nn.BatchNorm1d(num_features=2048, momentum=0.01)
-        #
-        # self.W_v_att = nn.Linear(in_features=embed_size, out_features=1, bias=True)
-        # self.bn_v_att = nn.BatchNorm1d(num_features=2048, momentum=0.01)
-        #
-        # self.W_a_h = nn.Linear(in_features=hidden_size, out_features=embed_size, bias=True)
-        # self.bn_a_h = nn.BatchNorm1d(num_features=1, momentum=0.01)
-        #
-        # self.W_a = nn.Linear(in_features=hidden_size, out_features=embed_size, bias=True)
-        # self.bn_a = nn.BatchNorm1d(num_features=10, momentum=0.01)
-        #
-        # self.W_a_att = nn.Linear(in_features=embed_size, out_features=1, bias=True)
-        # self.bn_a_att = nn.BatchNorm1d(num_features=10, momentum=0.01)
-        #
-        # self.W_fc = nn.Linear(in_features=visual_size + embed_size, out_features=embed_size, bias=True)
-        # self.bn_fc = nn.BatchNorm1d(num_features=visual_size + embed_size, momentum=0.01)
-        #
-        # self.tanh = nn.Tanh()
-        # self.softmax = nn.Softmax()
+        self.W_v = nn.Linear(in_features=visual_size, out_features=visual_size)
+        self.bn_v = nn.BatchNorm1d(num_features=visual_size, momentum=0.01)
 
-    def forward(self, visual_features, semantic_features, h_sent):
-        visual_features = self.bn(self.linear(visual_features))
-        # W_v_h = self.W_v_h(self.bn_v_h(h_sent)).view(-1, 1, 512)
-        # W_v = self.W_v(self.bn_v(visual_features))
-        # alpha_v = self.softmax(self.W_v_att(self.bn_v_att(self.tanh(W_v + W_v_h))))
-        # v_att = (alpha_v * visual_features).sum(1)
-        #
-        # W_a_h = self.W_a_h(self.bn_a_h(h_sent)).view(-1, 1, 512)
-        # W_a = self.W_a(self.bn_a(semantic_features))
-        # alpha_a = self.softmax(self.W_a_att(self.bn_a_att(self.tanh(W_a + W_a_h))))
+        self.W_v_h = nn.Linear(in_features=hidden_size, out_features=visual_size)
+        self.bn_v_h = nn.BatchNorm1d(num_features=visual_size, momentum=0.01)
+
+        self.W_v_att = nn.Linear(in_features=visual_size, out_features=visual_size)
+        self.bn_v_att = nn.BatchNorm1d(num_features=visual_size, momentum=0.01)
+
+        self.W_a = nn.Linear(in_features=hidden_size, out_features=hidden_size)
+        self.bn_a = nn.BatchNorm1d(num_features=10, momentum=0.01)
+
+        self.W_a_h = nn.Linear(in_features=hidden_size, out_features=hidden_size)
+        self.bn_a_h = nn.BatchNorm1d(num_features=1, momentum=0.01)
+
+        self.W_a_att = nn.Linear(in_features=hidden_size, out_features=hidden_size, bias=True)
+        self.bn_a_att = nn.BatchNorm1d(num_features=10, momentum=0.01)
+
+        self.W_fc = nn.Linear(in_features=visual_size + hidden_size, out_features=embed_size)
+        self.bn_fc = nn.BatchNorm1d(num_features=embed_size, momentum=0.01)
+
+        self.tanh = nn.Tanh()
+        self.softmax = nn.Softmax()
+
+    def forward(self, visual_features, semantic_features, h_sent) -> object:
+        """
+
+        :rtype: object
+        """
+        W_v = self.bn_v(self.W_v(visual_features))
+        W_v_h = self.bn_v_h(self.W_v_h(h_sent.squeeze(1)))
+
+        alpha_v = self.softmax(self.bn_v_att(self.W_v_att(self.tanh(W_v + W_v_h))))
+        v_att = torch.mul(alpha_v, visual_features)
+        # v_att = torch.mul(alpha_v, visual_features).sum(1).unsqueeze(1)
+
+        W_a_h = self.bn_a_h(self.W_a_h(h_sent))
+        W_a = self.bn_a(self.W_a(semantic_features))
+        alpha_a = self.softmax(self.bn_a_att(self.W_a_att(self.tanh(torch.add(W_a_h, W_a)))))
+        a_att = torch.mul(alpha_a, semantic_features).sum(1)
         # a_att = (alpha_a * semantic_features).sum(1)
+        ctx = self.bn_fc(self.W_fc(torch.cat([v_att, a_att], dim=1)))
         # return self.W_fc(self.bn_fc(torch.cat([v_att, a_att], dim=1)))
-        return self.bn(self.linear(visual_features))
+        return ctx
 
 
 class SentenceLSTM(nn.Module):
@@ -488,13 +565,17 @@ class SentenceLSTM(nn.Module):
         self.sigmoid = nn.Sigmoid()
         self.tanh = nn.Tanh()
 
-    def forward(self, ctx, prev_hidden_state, states=None):
+    def forward(self, ctx, prev_hidden_state, states=None) -> object:
+        """
+
+        :rtype: object
+        """
         ctx = ctx.unsqueeze(1)
         hidden_state, states = self.lstm(ctx, states)
-        topic = self.W_topic(self.bn_topic(self.sigmoid(self.W_t_h(self.bn_t_h(hidden_state))
-                                                        + self.W_t_ctx(self.bn_t_ctx(ctx)))))
-        p_stop = self.W_stop(self.bn_stop(self.sigmoid(self.W_stop_s_1(self.bn_stop_s_1(prev_hidden_state))
-                                          + self.W_stop_s(self.bn_stop_s(hidden_state)))))
+        topic = self.bn_topic(self.W_topic(self.sigmoid(self.bn_t_h(self.W_t_h(hidden_state))
+                                                        + self.bn_t_ctx(self.W_t_ctx(ctx)))))
+        p_stop = self.bn_stop(self.W_stop(self.sigmoid(self.bn_stop_s_1(self.W_stop_s_1(prev_hidden_state))
+                                          + self.bn_stop_s(self.W_stop_s(hidden_state)))))
         return topic, p_stop, hidden_state, states
 
 
@@ -522,7 +603,11 @@ class SentenceTCN(nn.Module):
         self.t_w = nn.Linear(in_features=5120, out_features=2, bias=True)
         self.tanh = nn.Tanh()
 
-    def forward(self, ctx, prev_output):
+    def forward(self, ctx, prev_output) -> object:
+        """
+
+        :rtype: object
+        """
         output = self.tcn.forward(ctx)
         topic = self.tanh(self.W_t_h(output) + self.W_t_ctx(ctx[:, -1, :]).squeeze(1))
         p_stop = self.W_stop(self.tanh(self.W_stop_s_1(prev_output) + self.W_stop_s(output)))
@@ -537,26 +622,50 @@ class WordLSTM(nn.Module):
         self.linear = nn.Linear(hidden_size, vocab_size)
         self.__init_weights()
         self.n_max = n_max
+        self.vocab_size = vocab_size
 
     def __init_weights(self):
         self.embed.weight.data.uniform_(-0.1, 0.1)
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
 
-    def forward(self, topic_vec, captions):
+    def forward(self, topic_vec, captions) -> object:
+        """
+
+        :rtype: object
+        """
         embeddings = self.embed(captions)
-        embeddings = torch.cat((topic_vec.unsqueeze(1), embeddings), 1)
+        embeddings = torch.cat((topic_vec, embeddings), 1)
         hidden, _ = self.lstm(embeddings)
         outputs = self.linear(hidden[:, -1, :])
         return outputs
 
-    def sample(self, features, start_tokens):
-        sampled_ids = np.zeros((np.shape(features)[0], self.n_max))
+    def val(self, features, start_tokens):
+        samples = torch.zeros((np.shape(features)[0], self.n_max, self.vocab_size))
+        samples[:, 0, start_tokens[0]] = 1
         predicted = start_tokens
         embeddings = features
-        embeddings = embeddings.unsqueeze(1)
+        embeddings = embeddings
 
-        for i in range(self.n_max):
+        for i in range(1, self.n_max):
+            predicted = self.embed(predicted)
+            embeddings = torch.cat([embeddings, predicted], dim=1)
+            hidden_states, _ = self.lstm(embeddings)
+            hidden_states = hidden_states[:, -1, :]
+            outputs = self.linear(hidden_states)
+            samples[:, i, :] = outputs
+            predicted = torch.max(outputs, 1)[1]
+            predicted = predicted.unsqueeze(1)
+        return samples
+
+    def sample(self, features, start_tokens):
+        sampled_ids = np.zeros((np.shape(features)[0], self.n_max))
+        sampled_ids[:, 0] = start_tokens.view(-1,)
+        predicted = start_tokens
+        embeddings = features
+        embeddings = embeddings
+
+        for i in range(1, self.n_max):
             predicted = self.embed(predicted)
             embeddings = torch.cat([embeddings, predicted], dim=1)
             hidden_states, _ = self.lstm(embeddings)
@@ -566,6 +675,7 @@ class WordLSTM(nn.Module):
             sampled_ids[:, i] = predicted
             predicted = predicted.unsqueeze(1)
         return sampled_ids
+
 
 class WordTCN(nn.Module):
     def __init__(self,
@@ -594,7 +704,11 @@ class WordTCN(nn.Module):
                        kernel_size=kernel_size,
                        dropout=dropout)
 
-    def forward(self, topic_vec, captions):
+    def forward(self, topic_vec, captions) -> object:
+        """
+
+        :rtype: object
+        """
         captions = self.embed(captions)
         embeddings = torch.cat([topic_vec, captions], dim=1)
         output = self.tcn.forward(embeddings)
@@ -605,24 +719,23 @@ class WordTCN(nn.Module):
 if __name__ == '__main__':
     import warnings
     warnings.filterwarnings("ignore")
-
-    images = torch.randn((4, 3, 224, 224))
-    captions = torch.ones((4, 10)).long()
-    hidden_state = torch.randn((4, 1, 512))
-
-    print("images:{}".format(images.shape))
-    print("captions:{}".format(captions.shape))
-    print("hidden_states:{}".format(hidden_state.shape))
-
-    extractor = VisualFeatureExtractor()
-    visual_features = extractor.forward(images)
-    print("visual_features:{}".format(visual_features.shape))
-
-    mlc = MLC()
-    tags, semantic_features = mlc.forward(visual_features)
-    print("tags:{}".format(tags.shape))
-    print("semantic_features:{}".format(semantic_features.shape))
-
+    # images = torch.randn((4, 3, 224, 224))
+    # captions = torch.ones((4, 10)).long()
+    # hidden_state = torch.randn((4, 1, 512))
+    #
+    # print("images:{}".format(images.shape))
+    # print("captions:{}".format(captions.shape))
+    # print("hidden_states:{}".format(hidden_state.shape))
+    #
+    # extractor = VisualFeatureExtractor()
+    # visual_features = extractor.forward(images)
+    # print("visual_features:{}".format(visual_features.shape))
+    #
+    # mlc = MLC()
+    # tags, semantic_features = mlc.forward(visual_features)
+    # print("tags:{}".format(tags.shape))
+    # print("semantic_features:{}".format(semantic_features.shape))
+    #
     # co_att = CoAttention()
     # ctx = co_att.forward(visual_features, semantic_features, hidden_state)
     # print("ctx:{}".format(ctx.shape))
@@ -631,8 +744,8 @@ if __name__ == '__main__':
     # topic, p_stop, hidden_state, states = sent_lstm.forward(ctx, hidden_state)
     # print("Topic:{}".format(topic.shape))
     # print("P_STOP:{}".format(p_stop.shape))
-
-    # word_lstm = WordLSTM()
+    #
+    # word_lstm = WordLSTM(embed_size=512, hidden_size=512, vocab_size=100, num_layers=1)
     # words = word_lstm.forward(topic, captions)
     # print("words:{}".format(words.shape))
 

@@ -8,7 +8,7 @@ class Chomp1d(nn.Module):
         super(Chomp1d, self).__init__()
         self.chomp_size = chomp_size
 
-    def forward(self, x):
+    def forward(self, x) -> object:
         return x[:, :, :-self.chomp_size].contiguous()
 
 
@@ -39,7 +39,7 @@ class TemporalBlock(nn.Module):
         if self.downsample is not None:
             self.downsample.weight.data.normal_(0, 0.01)
 
-    def forward(self, x):
+    def forward(self, x) -> object:
         out = self.net(x)
         res = x if self.downsample is None else self.downsample(x)
         return self.relu(out + res)
@@ -59,7 +59,7 @@ class TemporalConvNet(nn.Module):
 
         self.network = nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x) -> object:
         return self.network(x)
 
 
@@ -77,7 +77,7 @@ class TCN(nn.Module):
         self.linear.weight.data.normal_(0, 0.01)
         self.linear.bias.data.fill_(0)
 
-    def forward(self, inputs):
+    def forward(self, inputs) -> object:
         y = self.tcn.forward(inputs)
         output = self.linear(y[:, :, -1])
         return output

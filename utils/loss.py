@@ -10,9 +10,10 @@ class WARPLoss(loss.Module):
         for i in range(1, num_labels):
             self.rank_weights.append(self.rank_weights[i - 1] + (1.0 / i + 1))
 
-    def forward(self, input, target):
+    def forward(self, input, target) -> object:
         """
 
+        :rtype:
         :param input: Deep features tensor Variable of size batch x n_attrs.
         :param target: Ground truth tensor Variable of size batch x n_attrs.
         :return:
@@ -51,7 +52,7 @@ class MultiLabelSoftmaxRegressionLoss(loss.Module):
     def __init__(self):
         super(MultiLabelSoftmaxRegressionLoss, self).__init__()
 
-    def forward(self, input, target):
+    def forward(self, input, target) -> object:
         return -1 * torch.sum(input * target)
 
 
