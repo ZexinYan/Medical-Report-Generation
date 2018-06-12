@@ -8,7 +8,7 @@ import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torch.autograd import Variable
 
-from utils.models_debugger import *
+from utils.models import *
 from utils.dataset import *
 from utils.loss import *
 from utils.build_tag import *
@@ -30,21 +30,33 @@ class CaptionSampler(object):
         self.sentence_model = self.__init_sentence_model()
         self.word_model = self.__init_word_word()
 
+        self.ce_criterion = self._init_ce_criterion()
+        self.mse_criterion = self._init_mse_criterion()
+
+    @staticmethod
+    def _init_ce_criterion():
+        return nn.CrossEntropyLoss(size_average=False, reduce=False)
+
+    @staticmethod
+    def _init_mse_criterion():
+        return nn.MSELoss()
+
     def test(self):
-        self.extractor.train()
-        self.mlc.train()
-        self.co_attention.train()
-        self.sentence_model.train()
-        self.word_model.train()
+        tag_loss, stop_loss, word_loss, loss = 0, 0, 0, 0
+        self.extractor.eval()
+        self.mlc.eval()
+        self.co_attention.eval()
+        self.sentence_model.eval()
+        self.word_model.eval()
 
-        progress_bar = tqdm(self.data_loader, desc='Testing')
-
-        for images, _, label, captions, prob in progress_bar:
+        for i, (images, _, label, captions, prob) in enumerate(self.data_loader):
+            batch_tag_loss, batch_stop_loss, batch_word_loss, batch_loss = 0, 0, 0, 0
             images = self.__to_var(images, requires_grad=False)
 
-            visual_features = self.extractor.forward(images)
-            tags, semantic_features = self.mlc.forward(visual_features)
+            visual_features, avg_features = self.extractor.forward(images)
+            tags, semantic_features = self.mlc.forward(avg_features)
 
+            batch_tag_loss = self.mse_criterion(tags, self.__to_var(label, requires_grad=False)).sum()
 
             sentence_states = None
             prev_hidden_states = self.__to_var(torch.zeros(images.shape[0], 1, self.args.hidden_size))
@@ -53,57 +65,95 @@ class CaptionSampler(object):
             prob_real = self.__to_var(torch.Tensor(prob).long(), requires_grad=False)
 
             for sentence_index in range(captions.shape[1]):
-                ctx = self.co_attention.forward(visual_features, semantic_features, prev_hidden_states)
+                ctx, v_att, a_att = self.co_attention.forward(avg_features,
+                                                       semantic_features,
+                                                       prev_hidden_states)
+
                 topic, p_stop, hidden_states, sentence_states = self.sentence_model.forward(ctx,
                                                                                             prev_hidden_states,
                                                                                             sentence_states)
+
+                batch_stop_loss += self.ce_criterion(p_stop.squeeze(), prob_real[:, sentence_index]).sum()
+
                 for word_index in range(1, captions.shape[2]):
                     words = self.word_model.forward(topic, context[:, sentence_index, :word_index])
-                    # Debugging...
-                    # print("Context:{}".format(context[:, 0, :word_index]))
-                    # print("word index: {}".format(word_index))
-                    # print("Pred: {}".format(torch.max(words.squeeze(1), 1)[1]))
-                    # print("Real: {}".format(context[:, sentence_index, word_index]))
-                    # print()
+                    word_mask = (context[:, sentence_index, word_index] > 0).float()
+                    batch_word_loss += (self.ce_criterion(words, context[:, sentence_index, word_index])
+                                        * word_mask).sum()
 
-    def sample(self, image_file):
-        self.extractor.train()
-        self.mlc.train()
-        self.co_attention.train()
-        self.sentence_model.train()
-        self.word_model.train()
+            batch_loss = self.args.lambda_tag * batch_tag_loss \
+                         + self.args.lambda_stop * batch_stop_loss \
+                         + self.args.lambda_word * batch_word_loss
 
-        # image_data = Image.open(image_file).convert('RGB')
-        image = torch.randn((1, 3, 224, 224))
-        image = self.transform(image)
+            tag_loss += self.args.lambda_tag * batch_tag_loss.data
+            stop_loss += self.args.lambda_stop * batch_stop_loss.data
+            word_loss += self.args.lambda_word * batch_word_loss.data
+            loss += batch_loss.data
 
-        image = self.__to_var(image, requires_grad=False)
-        visual_features = self.extractor.forward(image)
-        tags, semantic_features = self.mlc.forward(visual_features)
+        return tag_loss, stop_loss, word_loss, loss
 
-        sentence_states = None
-        prev_hidden_states = self.__to_var(torch.zeros(1, 1, self.args.hidden_size))
-        pred_sentences = {}
+    def sample(self):
+        progress_bar = tqdm(self.data_loader, desc='Sampling')
+        results = {}
 
-        for i in range(self.args.s_max):
-            ctx = self.co_attention.forward(visual_features, semantic_features, prev_hidden_states)
-            topic, p_stop, hidden_state, sentence_states = self.sentence_model.forward(ctx,
-                                                                                    prev_hidden_states,
-                                                                                    sentence_states)
-            p_stop = p_stop.squeeze(1)
-            p_stop = torch.max(p_stop, 1)[1].unsqueeze(1)
+        self.extractor.eval()
+        self.mlc.eval()
+        self.co_attention.eval()
+        self.sentence_model.eval()
+        self.word_model.eval()
 
-            start_tokens = np.zeros((1, 1))
-            start_tokens[:, 0] = self.vocab('<start>')
-            start_tokens = self.__to_var(torch.Tensor(start_tokens).long(), requires_grad=False)
+        for images, image_id, label, captions, _ in progress_bar:
+            images = self.__to_var(images, requires_grad=False)
+            visual_features, avg_features = self.extractor.forward(images)
+            tags, semantic_features = self.mlc.forward(avg_features)
 
-            sampled_ids = self.word_model.sample(topic, start_tokens)
-            prev_hidden_states = hidden_state
-            sampled_ids = sampled_ids * p_stop
+            sentence_states = None
+            prev_hidden_states = self.__to_var(torch.zeros(images.shape[0], 1, self.args.hidden_size))
+            pred_sentences = {}
+            real_sentences = {}
+            for i in image_id:
+                pred_sentences[i] = {}
+                real_sentences[i] = {}
 
-            pred_sentences[i] = self.__vec2sent(sampled_ids.cpu().detach().numpy())
+            for i in range(self.args.s_max):
+                ctx, v_att, a_att = self.co_attention.forward(avg_features, semantic_features, prev_hidden_states)
 
-        self.tagger.array2tags(torch.topk(tags, self.args.k)[1].cpu().detach().numpy())
+                topic, p_stop, hidden_state, sentence_states = self.sentence_model.forward(ctx,
+                                                                                          prev_hidden_states,
+                                                                                          sentence_states)
+                p_stop = p_stop.squeeze(1)
+                p_stop = torch.max(p_stop, 1)[1].unsqueeze(1)
+
+                start_tokens = np.zeros((topic.shape[0], 1))
+                start_tokens[:, 0] = self.vocab('<start>')
+                start_tokens = self.__to_var(torch.Tensor(start_tokens).long(), requires_grad=False)
+
+                sampled_ids = self.word_model.sample(topic, start_tokens)
+                prev_hidden_states = hidden_state
+                sampled_ids = sampled_ids * p_stop
+
+                for id, array in zip(image_id, sampled_ids):
+                    pred_sentences[id][i] = self.__vec2sent(array.cpu().detach().numpy())
+
+            for id, array in zip(image_id, captions):
+                for i, sent in enumerate(array):
+                    real_sentences[id][i] = self.__vec2sent(sent)
+
+            for id, pred_tag, real_tag in zip(image_id, tags, label):
+                results[id] = {
+                    'Real Tags': self.tagger.inv_tags2array(real_tag),
+                    'Pred Tags': self.tagger.array2tags(torch.topk(pred_tag, self.args.k)[1].cpu().detach().numpy()),
+                    'Pred Sent': pred_sentences[id],
+                    'Real Sent': real_sentences[id]
+                }
+
+        self.__save_json(results)
+
+    def __save_json(self, result):
+        if not os.path.exists(self.args.result_path):
+            os.makedirs(self.args.result_path)
+        with open(os.path.join(self.args.result_path, '{}.json'.format(self.args.result_name)), 'w') as f:
+            json.dump(result, f)
 
     def __load_mode_state_dict(self):
         try:
@@ -141,14 +191,14 @@ class CaptionSampler(object):
                                  vocabulary=self.vocab,
                                  transform=self.transform,
                                  batch_size=self.args.batch_size,
+                                 s_max=self.args.s_max,
+                                 n_max=self.args.n_max,
                                  shuffle=False)
         return data_loader
 
     def __init_transform(self):
         transform = transforms.Compose([
             transforms.Resize((self.args.resize, self.args.resize)),
-            # transforms.RandomCrop(self.args.crop_size),
-            # transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             transforms.Normalize((0.485, 0.456, 0.406),
                                  (0.229, 0.224, 0.225))])
@@ -160,7 +210,8 @@ class CaptionSampler(object):
         return Variable(x, requires_grad=requires_grad)
 
     def __init_visual_extractor(self):
-        model = VisualFeatureExtractor(pretrained=False)
+        model = VisualFeatureExtractor(model_name=self.args.visual_model_name,
+                                       pretrained=self.args.pretrained)
 
         if self.model_state_dict is not None:
             print("Visual Extractor Loaded!")
@@ -187,7 +238,9 @@ class CaptionSampler(object):
     def __init_co_attention(self):
         model = CoAttention(embed_size=self.args.embed_size,
                             hidden_size=self.args.hidden_size,
-                            visual_size=self.extractor.out_features)
+                            visual_size=self.extractor.out_features,
+                            k=self.args.k,
+                            momentum=self.args.momentum)
 
         if self.model_state_dict is not None:
             print("Co-Attention Loaded!")
@@ -198,9 +251,12 @@ class CaptionSampler(object):
         return model
 
     def __init_sentence_model(self):
-        model = SentenceLSTM(embed_size=self.args.embed_size,
+        model = SentenceLSTM(version=self.args.version,
+                             embed_size=self.args.embed_size,
                              hidden_size=self.args.hidden_size,
-                             num_layers=self.args.sentence_num_layers)
+                             num_layers=self.args.sentence_num_layers,
+                             dropout=self.args.dropout,
+                             momentum=self.args.momentum)
 
         if self.model_state_dict is not None:
             print("Sentence Model Loaded!")
@@ -214,7 +270,8 @@ class CaptionSampler(object):
         model = WordLSTM(vocab_size=len(self.vocab),
                          embed_size=self.args.embed_size,
                          hidden_size=self.args.hidden_size,
-                         num_layers=self.args.word_num_layers)
+                         num_layers=self.args.word_num_layers,
+                         n_max=self.args.n_max)
 
         if self.model_state_dict is not None:
             print("Word Model Loaded!")
@@ -226,48 +283,73 @@ class CaptionSampler(object):
 
 
 if __name__ == '__main__':
-    model_dir = './report_models/only_training/20180528-02:44:52'
-
     import warnings
     warnings.filterwarnings("ignore")
+    model_dir = './report_models/debug_v2/20180611-11:30'
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--resize', type=int, default=224,
-                        help='size for resizing images')
-    parser.add_argument('--pretrained', action='store_true', default=False,
-                        help='not using pretrained model when training')
-    parser.add_argument('--vocab_path', type=str, default='./data/vocab.pkl',
-                        help='the path for vocabulary object')
+    """
+    Data Argument
+    """
+    # Path Argument
     parser.add_argument('--image_dir', type=str, default='./data/images',
                         help='the path for images')
-    parser.add_argument('--caption_json', type=str, default='./data/captions.json',
+    parser.add_argument('--caption_json', type=str, default='./data/debugging_captions.json',
                         help='path for captions')
-    parser.add_argument('--file_lits', type=str, default='./data/val_data.txt',
+    parser.add_argument('--vocab_path', type=str, default='./data/debugging_vocab.pkl',
+                        help='the path for vocabulary object')
+    parser.add_argument('--file_lits', type=str, default='./data/debugging.txt',
                         help='the path for test file list')
-    parser.add_argument('--load_model_path', type=str, default=os.path.join(model_dir, 'best_stop.pth.tar'),
+    parser.add_argument('--load_model_path', type=str, default=os.path.join(model_dir, 'train_best_loss.pth.tar'),
                         help='The path of loaded model')
+
+    # transforms argument
+    parser.add_argument('--resize', type=int, default=224,
+                        help='size for resizing images')
+
+    # Saved result
     parser.add_argument('--result_path', type=str, default=os.path.join(model_dir, 'results'),
                         help='the path for storing results')
     parser.add_argument('--result_name', type=str, default='train',
                         help='the name of results')
 
+    """
+    Model argument
+    """
+    parser.add_argument('--momentum', type=int, default=0.1)
+    # VisualFeatureExtractor
+    parser.add_argument('--visual_model_name', type=str, default='densenet201',
+                        help='CNN model name')
+    parser.add_argument('--pretrained', action='store_true', default=False,
+                        help='not using pretrained model when training')
+
+    # MLC
     parser.add_argument('--classes', type=int, default=156)
     parser.add_argument('--sementic_features_dim', type=int, default=512)
-    parser.add_argument('--kernel_size', type=int, default=7)
-    parser.add_argument('--fc_in_features', type=int, default=2048)
     parser.add_argument('--k', type=int, default=10)
+
+    # Co-Attention
     parser.add_argument('--embed_size', type=int, default=512)
     parser.add_argument('--hidden_size', type=int, default=512)
-    parser.add_argument('--visual_size', type=int, default=49)
+
+    # Sentence Model
+    parser.add_argument('--version', type=str, default='v1')
     parser.add_argument('--sentence_num_layers', type=int, default=2)
+    parser.add_argument('--dropout', type=float, default=0.3)
+
+    # Word Model
     parser.add_argument('--word_num_layers', type=int, default=1)
 
+    """
+    Generating Argument
+    """
     parser.add_argument('--s_max', type=int, default=6)
     parser.add_argument('--n_max', type=int, default=30)
 
     parser.add_argument('--batch_size', type=int, default=16)
 
+    # Loss function
     parser.add_argument('--lambda_tag', type=float, default=10000)
     parser.add_argument('--lambda_stop', type=float, default=10)
     parser.add_argument('--lambda_word', type=float, default=1)
@@ -276,11 +358,11 @@ if __name__ == '__main__':
     args.cuda = torch.cuda.is_available()
 
     sampler = CaptionSampler(args)
-    # tag_loss, stop_loss, word_loss, loss = sampler.test()
-    #
-    # print("tag loss:{}".format(tag_loss))
-    # print("stop loss:{}".format(stop_loss))
-    # print("word loss:{}".format(word_loss))
-    # print("loss:{}".format(loss))
+    tag_loss, stop_loss, word_loss, loss = sampler.test()
+
+    print("tag loss:{}".format(tag_loss))
+    print("stop loss:{}".format(stop_loss))
+    print("word loss:{}".format(word_loss))
+    print("loss:{}".format(loss))
 
     sampler.sample()

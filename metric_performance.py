@@ -20,7 +20,7 @@ def load_json(json_file):
     return data
 
 if __name__ == '__main__':
-    test = load_json('./train.json')
+    test = load_json('./report_models/debug_v2/20180611-11:30/results/train.json')
     datasetGTS = {'annotations': []}
     datasetRES = {'annotations': []}
 

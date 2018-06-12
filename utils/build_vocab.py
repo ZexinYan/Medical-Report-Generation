@@ -54,7 +54,7 @@ def build_vocab(json_file, threshold):
     counter = Counter()
 
     for items in caption_reader:
-        text = items.replace('.', '')
+        text = items.replace('.', '').replace(',', '')
         counter.update(text.lower().split(' '))
     words = [word for word, cnt in counter.items() if cnt > threshold and word != '']
     vocab = Vocabulary()
@@ -75,6 +75,6 @@ def main(json_file, threshold, vocab_path):
 
 
 if __name__ == '__main__':
-    main(json_file='../data/captions.json',
-         threshold=10,
-         vocab_path='../data/vocab.pkl')
+    main(json_file='../data/new_data/captions.json',
+         threshold=15,
+         vocab_path='../data/new_data/vocab.pkl')

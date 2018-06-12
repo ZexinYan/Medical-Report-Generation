@@ -9,19 +9,26 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from torch.autograd import Variable
 
-from utils.models import *
+from utils.models_debugger import *
 from utils.dataset import *
 from utils.loss import *
 from utils.logger import Logger
+
+# TODO Gradient Clipping
+# LSTM Initialization & Dropout
+# FC Initialization
 
 
 class DebuggerBase:
     def __init__(self, args):
         self.args = args
-        self.min_loss = 100000000
+        self.min_val_loss = 10000000000
         self.min_tag_loss = 1000000
         self.min_stop_loss = 1000000
         self.min_word_loss = 10000000
+
+        self.min_train_loss = 10000000000
+
         self._init_model_path()
         self.model_dir = self._init_model_dir()
         self.transform = self._init_transform()
@@ -56,11 +63,14 @@ class DebuggerBase:
                                                                              train_loss,
                                                                              val_loss,
                                                                              self.optimizer.param_groups[0]['lr']))
+            # self._save_model(epoch_id,
+            #                  train_loss,
+            #                  train_tag_loss,
+            #                  train_stop_loss,
+            #                  train_word_loss)
             self._save_model(epoch_id,
-                             train_loss,
-                             train_tag_loss,
-                             train_stop_loss,
-                             train_word_loss)
+                             val_loss,
+                             train_loss)
             self._log(train_tags_loss=train_tag_loss,
                       train_stop_loss=train_stop_loss,
                       train_word_loss=train_word_loss,
@@ -171,7 +181,7 @@ class DebuggerBase:
                                  batch_size=self.args.batch_size,
                                  s_max=self.args.s_max,
                                  n_max=self.args.n_max,
-                                 shuffle=True)
+                                 shuffle=False)
         return data_loader
 
     @staticmethod
@@ -186,23 +196,31 @@ class DebuggerBase:
         params = list(self.extractor.parameters()) + \
                  list(self.mlc.parameters()) + \
                  list(self.co_attention.parameters()) + \
-                 list(self.co_attention.bn_v.parameters()) + \
-                 list(self.co_attention.bn_v_h.parameters()) + \
-                 list(self.co_attention.bn_v_att.parameters()) + \
-                 list(self.co_attention.bn_a.parameters()) + \
-                 list(self.co_attention.bn_a_h.parameters()) + \
-                 list(self.co_attention.bn_a_att.parameters()) + \
-                 list(self.co_attention.bn_fc.parameters()) + \
                  list(self.word_model.parameters()) + \
-                 list(self.sentence_model.parameters()) + \
-                 list(self.sentence_model.bn_t_h.parameters()) + \
-                 list(self.sentence_model.bn_t_ctx.parameters()) + \
-                 list(self.sentence_model.bn_stop_s_1.parameters()) + \
-                 list(self.sentence_model.bn_stop_s.parameters()) + \
-                 list(self.sentence_model.bn_stop.parameters()) + \
-                 list(self.sentence_model.bn_topic.parameters()) + \
-                 list(self.sentence_model.bn_topic_2.parameters())
+                 list(self.sentence_model.parameters())
         return torch.optim.Adam(params=params, lr=self.args.learning_rate)
+
+    # def _init_optimizer(self):
+    #     params = list(self.extractor.parameters()) + \
+    #              list(self.mlc.parameters()) + \
+    #              list(self.co_attention.parameters()) + \
+    #              list(self.co_attention.bn_v.parameters()) + \
+    #              list(self.co_attention.bn_v_h.parameters()) + \
+    #              list(self.co_attention.bn_v_att.parameters()) + \
+    #              list(self.co_attention.bn_a.parameters()) + \
+    #              list(self.co_attention.bn_a_h.parameters()) + \
+    #              list(self.co_attention.bn_a_att.parameters()) + \
+    #              list(self.co_attention.bn_fc.parameters()) + \
+    #              list(self.word_model.parameters()) + \
+    #              list(self.sentence_model.parameters()) + \
+    #              list(self.sentence_model.bn_t_h.parameters()) + \
+    #              list(self.sentence_model.bn_t_ctx.parameters()) + \
+    #              list(self.sentence_model.bn_stop_s_1.parameters()) + \
+    #              list(self.sentence_model.bn_stop_s.parameters()) + \
+    #              list(self.sentence_model.bn_stop.parameters()) + \
+    #              list(self.sentence_model.bn_topic.parameters()) + \
+    #              list(self.sentence_model.bn_topic_2.parameters())
+    #     return torch.optim.Adam(params=params, lr=self.args.learning_rate)
 
     def _log(self,
              train_tags_loss,
@@ -246,7 +264,7 @@ class DebuggerBase:
         return str(time.strftime('%Y%m%d-%H:%M:%S', time.gmtime()))
 
     def _init_scheduler(self):
-        scheduler = ReduceLROnPlateau(self.optimizer, 'min', patience=20, factor=0.5)
+        scheduler = ReduceLROnPlateau(self.optimizer, 'min', patience=10, factor=0.1)
         return scheduler
 
     def _init_model_path(self):
@@ -257,7 +275,7 @@ class DebuggerBase:
         if not os.path.exists(self.args.log_path):
             os.makedirs(self.args.log_path)
 
-    def _save_model(self, epoch_id, loss, tag_loss, stop_loss, word_loss):
+    def _save_model(self, epoch_id, val_loss, train_loss):
         def save_model(_filename):
             print("Saved Model in {}".format(_filename))
             torch.save({'extractor': self.extractor.state_dict(),
@@ -269,10 +287,15 @@ class DebuggerBase:
                         'epoch': epoch_id},
                        os.path.join(self.model_dir, "{}".format(_filename)))
 
-        if loss < self.min_loss:
-            file_name = "best_loss.pth.tar"
+        if val_loss < self.min_val_loss:
+            file_name = "val_best_loss.pth.tar"
             save_model(file_name)
-            self.min_loss = loss
+            self.min_val_loss = val_loss
+
+        if train_loss < self.min_train_loss:
+            file_name = "train_best_loss.pth.tar"
+            save_model(file_name)
+            self.min_train_loss = train_loss
 
 
 class LSTMDebugger(DebuggerBase):
@@ -304,7 +327,7 @@ class LSTMDebugger(DebuggerBase):
             prob_real = self._to_var(torch.Tensor(prob).long(), requires_grad=False)
 
             for sentence_index in range(captions.shape[1]):
-                ctx = self.co_attention.forward(visual_features, semantic_features, prev_hidden_states)
+                ctx, v_att = self.co_attention.forward(visual_features, semantic_features, prev_hidden_states)
                 topic, p_stop, hidden_states, sentence_states = self.sentence_model.forward(ctx,
                                                                                             prev_hidden_states,
                                                                                             sentence_states)
@@ -315,13 +338,15 @@ class LSTMDebugger(DebuggerBase):
                 # print()
                 for word_index in range(1, captions.shape[2]):
                     words = self.word_model.forward(topic, context[:, sentence_index, :word_index])
+                    word_mask = (context[:, sentence_index, word_index] > 0).float()
                     # Debugging...
                     # print("Context:{}".format(context[:, 0, :word_index]))
                     # print("word index: {}".format(word_index))
                     # print("Pred: {}".format(torch.max(words.squeeze(1), 1)[1]))
                     # print("Real: {}".format(context[:, sentence_index, word_index]))
                     # print()
-                    batch_word_loss += (self.ce_criterion(words, context[:, sentence_index, word_index])).sum()
+                    batch_word_loss += (self.ce_criterion(words, context[:, sentence_index, word_index])
+                                        * word_mask).sum()
             batch_loss = self.args.lambda_tag * batch_tag_loss \
                          + self.args.lambda_stop * batch_stop_loss \
                          + self.args.lambda_word * batch_word_loss
@@ -340,11 +365,11 @@ class LSTMDebugger(DebuggerBase):
     def _epoch_val(self):
         # print("Validation:")
         tag_loss, stop_loss, word_loss, loss = 0, 0, 0, 0
-        # self.extractor.eval()
-        # self.mlc.eval()
-        # self.co_attention.eval()
-        # self.sentence_model.eval()
-        # self.word_model.eval()
+        self.extractor.eval()
+        self.mlc.eval()
+        self.co_attention.eval()
+        self.sentence_model.eval()
+        self.word_model.eval()
 
         for i, (images, _, label, captions, prob) in enumerate(self.val_data_loader):
             batch_tag_loss, batch_stop_loss, batch_word_loss, batch_loss = 0, 0, 0, 0
@@ -362,7 +387,7 @@ class LSTMDebugger(DebuggerBase):
             prob_real = self._to_var(torch.Tensor(prob).long(), requires_grad=False)
 
             for sentence_index in range(captions.shape[1]):
-                ctx = self.co_attention.forward(visual_features, semantic_features, prev_hidden_states)
+                ctx, v_att = self.co_attention.forward(visual_features, semantic_features, prev_hidden_states)
                 topic, p_stop, hidden_states, sentence_states = self.sentence_model.forward(ctx,
                                                                                             prev_hidden_states,
                                                                                             sentence_states)
@@ -373,13 +398,15 @@ class LSTMDebugger(DebuggerBase):
                 # print()
                 for word_index in range(1, captions.shape[2]):
                     words = self.word_model.forward(topic, context[:, sentence_index, :word_index])
+                    word_mask = (context[:, sentence_index, word_index] > 0).float()
                     # Debugging...
                     # print("Context:{}".format(context[:, 0, :word_index]))
                     # print("word index: {}".format(word_index))
                     # print("Pred: {}".format(torch.max(words.squeeze(1), 1)[1]))
                     # print("Real: {}".format(context[:, sentence_index, word_index]))
                     # print()
-                    batch_word_loss += (self.ce_criterion(words, context[:, sentence_index, word_index])).sum()
+                    batch_word_loss += (self.ce_criterion(words, context[:, sentence_index, word_index])
+                                        * word_mask).sum()
             batch_loss = self.args.lambda_tag * batch_tag_loss \
                          + self.args.lambda_stop * batch_stop_loss \
                          + self.args.lambda_word * batch_word_loss
@@ -502,9 +529,9 @@ if __name__ == '__main__':
     parser.add_argument('--val_file_list', type=str, default='./data/val_data.txt',
                         help='the val array')
     parser.add_argument('--load_model_path', type=str,
-                        default='./report_models/only_training/20180528-02:44:52/best_loss.pth.tar',
+                        default='.',
                         help='The path of loaded model')
-    parser.add_argument('--saved_model_name', type=str, default='train_easy_val',
+    parser.add_argument('--saved_model_name', type=str, default='v2',
                         help='The name of saved model')
 
     parser.add_argument('--classes', type=int, default=156)
@@ -518,7 +545,7 @@ if __name__ == '__main__':
     parser.add_argument('--sentence_num_layers', type=int, default=2)
     parser.add_argument('--word_num_layers', type=int, default=1)
 
-    parser.add_argument('--s_max', type=int, default=8)
+    parser.add_argument('--s_max', type=int, default=6)
     parser.add_argument('--n_max', type=int, default=30)
 
     parser.add_argument('--lambda_tag', type=float, default=10000)
@@ -539,5 +566,3 @@ if __name__ == '__main__':
 
     debugger = LSTMDebugger(args)
     debugger.train()
-
-# 32738 train_easy_val
