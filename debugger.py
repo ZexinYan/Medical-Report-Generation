@@ -89,7 +89,6 @@ class DebuggerBase:
             transforms.Resize(self.args.resize),
             transforms.RandomCrop(self.args.crop_size),
             transforms.RandomHorizontalFlip(),
-            transforms.RandomVerticalFlip(),
             transforms.ToTensor(),
             transforms.Normalize((0.485, 0.456, 0.406),
                                  (0.229, 0.224, 0.225))])
@@ -182,7 +181,7 @@ class DebuggerBase:
                                  batch_size=self.args.batch_size,
                                  s_max=self.args.s_max,
                                  n_max=self.args.n_max,
-                                 shuffle=False)
+                                 shuffle=True)
         return data_loader
 
     @staticmethod
@@ -267,7 +266,7 @@ class DebuggerBase:
                         'sentence_model': self.sentence_model.state_dict(),
                         'word_model': self.word_model.state_dict(),
                         'optimizer': self.optimizer.state_dict(),
-                        'epoch': epoch_id},
+                        ' ': epoch_id},
                        os.path.join(self.model_dir, "{}".format(_filename)))
 
         if val_loss < self.min_val_loss:
@@ -444,9 +443,9 @@ if __name__ == '__main__':
                         help='the path for images')
     parser.add_argument('--caption_json', type=str, default='./data/new_data/captions.json',
                         help='path for captions')
-    parser.add_argument('--train_file_list', type=str, default='./data/new_data/train_data.txt',
+    parser.add_argument('--train_file_list', type=str, default='./data/new_data/debugging_data.txt',
                         help='the train array')
-    parser.add_argument('--val_file_list', type=str, default='./data/new_data/val_data.txt',
+    parser.add_argument('--val_file_list', type=str, default='./data/new_data/debugging_data.txt',
                         help='the val array')
     # transforms argument
     parser.add_argument('--resize', type=int, default=256,
@@ -472,7 +471,7 @@ if __name__ == '__main__':
                         help='not using pretrained model when training')
 
     # MLC
-    parser.add_argument('--classes', type=int, default=209)
+    parser.add_argument('--classes', type=int, default=210)
     parser.add_argument('--sementic_features_dim', type=int, default=512)
     parser.add_argument('--k', type=int, default=10)
 

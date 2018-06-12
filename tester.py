@@ -2,6 +2,8 @@ import time
 import pickle
 import argparse
 from tqdm import tqdm
+from PIL import Image
+import cv2
 
 import torch
 import torchvision.transforms as transforms
@@ -43,11 +45,6 @@ class CaptionSampler(object):
 
     def test(self):
         tag_loss, stop_loss, word_loss, loss = 0, 0, 0, 0
-        self.extractor.eval()
-        self.mlc.eval()
-        self.co_attention.eval()
-        self.sentence_model.eval()
-        self.word_model.eval()
 
         for i, (images, _, label, captions, prob) in enumerate(self.data_loader):
             batch_tag_loss, batch_stop_loss, batch_word_loss, batch_loss = 0, 0, 0, 0
@@ -92,15 +89,9 @@ class CaptionSampler(object):
 
         return tag_loss, stop_loss, word_loss, loss
 
-    def sample(self):
-        progress_bar = tqdm(self.data_loader, desc='Sampling')
+    def generate(self):
+        progress_bar = tqdm(self.data_loader, desc='Generating')
         results = {}
-
-        self.extractor.eval()
-        self.mlc.eval()
-        self.co_attention.eval()
-        self.sentence_model.eval()
-        self.word_model.eval()
 
         for images, image_id, label, captions, _ in progress_bar:
             images = self.__to_var(images, requires_grad=False)
@@ -149,6 +140,70 @@ class CaptionSampler(object):
 
         self.__save_json(results)
 
+    def sample(self, image_file):
+
+        cam_dir = self.__init_cam_path(image_file)
+        image_file = os.path.join(self.args.image_dir, image_file)
+
+        imageData = Image.open(image_file).convert('RGB')
+        imageData = self.transform(imageData)
+        imageData = imageData.unsqueeze_(0)
+
+        image = self.__to_var(imageData, requires_grad=False)
+
+        visual_features, avg_features = self.extractor.forward(image)
+        avg_features.unsqueeze_(0)
+
+        tags, semantic_features = self.mlc(avg_features)
+        sentence_states = None
+        prev_hidden_states = self.__to_var(torch.zeros(1, 1, self.args.hidden_size))
+
+        pred_sentences = []
+
+        for i in range(self.args.s_max):
+            ctx, alpht_v, alpht_a = self.co_attention.forward(avg_features, semantic_features, prev_hidden_states)
+            topic, p_stop, hidden_state, sentence_states = self.sentence_model.forward(ctx,
+                                                                                       prev_hidden_states,
+                                                                                       sentence_states)
+            p_stop = p_stop.squeeze(1)
+            p_stop = torch.max(p_stop, 1)[1].unsqueeze(1)
+
+            start_tokens = np.zeros((topic.shape[0], 1))
+            start_tokens[:, 0] = self.vocab('<start>')
+            start_tokens = self.__to_var(torch.Tensor(start_tokens).long(), requires_grad=False)
+
+            sampled_ids = self.word_model.sample(topic, start_tokens)
+            prev_hidden_states = hidden_state
+            sampled_ids = sampled_ids * p_stop
+
+            pred_sentences.append(self.__vec2sent(sampled_ids.cpu().detach().numpy()[0]))
+
+            cam = torch.mul(visual_features, alpht_v.view(alpht_v.shape[0], alpht_v.shape[1], 1, 1)).sum(1)
+            cam.squeeze_()
+
+            cam = cam.cpu().data.numpy()
+            cam = cam / np.sum(cam)
+            cam = cv2.resize(cam, (self.args.cam_size, self.args.cam_size))
+            cam = cv2.applyColorMap(np.uint8(255 * cam), cv2.COLORMAP_JET)
+
+            imgOriginal = cv2.imread(image_file, 1)
+            imgOriginal = cv2.resize(imgOriginal, (self.args.cam_size, self.args.cam_size))
+
+            img = cam * 0.5 + imgOriginal
+            cv2.imwrite(os.path.join(cam_dir, '{}.png'.format(i)), img)
+
+        return '. '.join(pred_sentences)
+
+    def __init_cam_path(self, image_file):
+        if not os.path.exists(self.args.generate_dir):
+            os.makedirs(self.args.generate_dir)
+
+        image_dir = os.path.join(self.args.generate_dir, image_file)
+
+        if not os.path.exists(image_dir):
+            os.makedirs(image_dir)
+        return image_dir
+
     def __save_json(self, result):
         if not os.path.exists(self.args.result_path):
             os.makedirs(self.args.result_path)
@@ -193,7 +248,7 @@ class CaptionSampler(object):
                                  batch_size=self.args.batch_size,
                                  s_max=self.args.s_max,
                                  n_max=self.args.n_max,
-                                 shuffle=False)
+                                 shuffle=True)
         return data_loader
 
     def __init_transform(self):
@@ -219,6 +274,8 @@ class CaptionSampler(object):
 
         if self.args.cuda:
             model = model.cuda()
+
+        model.eval()
         return model
 
     def __init_mlc(self):
@@ -233,6 +290,8 @@ class CaptionSampler(object):
 
         if self.args.cuda:
             model = model.cuda()
+
+        model.eval()
         return model
 
     def __init_co_attention(self):
@@ -248,6 +307,8 @@ class CaptionSampler(object):
 
         if self.args.cuda:
             model = model.cuda()
+
+        model.eval()
         return model
 
     def __init_sentence_model(self):
@@ -264,6 +325,8 @@ class CaptionSampler(object):
 
         if self.args.cuda:
             model = model.cuda()
+
+        model.eval()
         return model
 
     def __init_word_word(self):
@@ -279,13 +342,15 @@ class CaptionSampler(object):
 
         if self.args.cuda:
             model = model.cuda()
+
+        model.eval()
         return model
 
 
 if __name__ == '__main__':
     import warnings
     warnings.filterwarnings("ignore")
-    model_dir = './report_models/debug_v2/20180611-11:30'
+    model_dir = './report_models/debug_v1_new_data/20180612-08:06'
 
     parser = argparse.ArgumentParser()
 
@@ -295,23 +360,27 @@ if __name__ == '__main__':
     # Path Argument
     parser.add_argument('--image_dir', type=str, default='./data/images',
                         help='the path for images')
-    parser.add_argument('--caption_json', type=str, default='./data/debugging_captions.json',
+    parser.add_argument('--caption_json', type=str, default='./data/new_data/captions.json',
                         help='path for captions')
-    parser.add_argument('--vocab_path', type=str, default='./data/debugging_vocab.pkl',
+    parser.add_argument('--vocab_path', type=str, default='./data/new_data/vocab.pkl',
                         help='the path for vocabulary object')
-    parser.add_argument('--file_lits', type=str, default='./data/debugging.txt',
+    parser.add_argument('--file_lits', type=str, default='./data/new_data/debugging_data.txt',
                         help='the path for test file list')
-    parser.add_argument('--load_model_path', type=str, default=os.path.join(model_dir, 'train_best_loss.pth.tar'),
+    parser.add_argument('--load_model_path', type=str, default=os.path.join(model_dir, 'val_best_loss.pth.tar'),
                         help='The path of loaded model')
 
     # transforms argument
     parser.add_argument('--resize', type=int, default=224,
                         help='size for resizing images')
 
+    # CAM
+    parser.add_argument('--cam_size', type=int, default=224)
+    parser.add_argument('--generate_dir', type=str, default=os.path.join(model_dir, 'cam'))
+
     # Saved result
     parser.add_argument('--result_path', type=str, default=os.path.join(model_dir, 'results'),
                         help='the path for storing results')
-    parser.add_argument('--result_name', type=str, default='train',
+    parser.add_argument('--result_name', type=str, default='debugging',
                         help='the name of results')
 
     """
@@ -325,7 +394,7 @@ if __name__ == '__main__':
                         help='not using pretrained model when training')
 
     # MLC
-    parser.add_argument('--classes', type=int, default=156)
+    parser.add_argument('--classes', type=int, default=210)
     parser.add_argument('--sementic_features_dim', type=int, default=512)
     parser.add_argument('--k', type=int, default=10)
 
@@ -357,6 +426,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     args.cuda = torch.cuda.is_available()
 
+    print(args)
+
     sampler = CaptionSampler(args)
     tag_loss, stop_loss, word_loss, loss = sampler.test()
 
@@ -365,4 +436,7 @@ if __name__ == '__main__':
     print("word loss:{}".format(word_loss))
     print("loss:{}".format(loss))
 
-    sampler.sample()
+    sampler.generate()
+
+    sentences = sampler.sample('CXR1000_IM-0003-1001.png')
+    print(sentences)
