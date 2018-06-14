@@ -12,7 +12,8 @@ class VisualFeatureExtractor(nn.Module):
         super(VisualFeatureExtractor, self).__init__()
         self.model_name = model_name
         self.pretrained = pretrained
-        self.model, self.out_features, self.avg_func = self.__get_model()
+        self.model, self.out_features, self.avg_func, self.bn, self.linear = self.__get_model()
+        self.activation = nn.ReLU()
 
     def __get_model(self):
         model = None
@@ -30,7 +31,9 @@ class VisualFeatureExtractor(nn.Module):
             model = nn.Sequential(*modules)
             func = torch.nn.AvgPool2d(kernel_size=7, stride=1, padding=0)
             out_features = densenet.classifier.in_features
-        return model, out_features, func
+        linear = nn.Linear(in_features=out_features, out_features=out_features)
+        bn = nn.BatchNorm1d(num_features=out_features, momentum=0.1)
+        return model, out_features, func, bn, linear
 
     def forward(self, images):
         """
@@ -39,6 +42,7 @@ class VisualFeatureExtractor(nn.Module):
         """
         visual_features = self.model(images)
         avg_features = self.avg_func(visual_features).squeeze()
+        avg_features = self.activation(self.bn(self.linear(avg_features)))
         return visual_features, avg_features
 
 
@@ -67,12 +71,14 @@ class MLC(nn.Module):
 
 class CoAttention(nn.Module):
     def __init__(self,
+                 version='v1',
                  embed_size=512,
                  hidden_size=512,
                  visual_size=2048,
                  k=10,
                  momentum=0.1):
         super(CoAttention, self).__init__()
+        self.version = version
         self.W_v = nn.Linear(in_features=visual_size, out_features=visual_size)
         self.bn_v = nn.BatchNorm1d(num_features=visual_size, momentum=momentum)
 
@@ -121,7 +127,13 @@ class CoAttention(nn.Module):
         self.W_fc.weight.data.uniform_(-0.1, 0.1)
         self.W_fc.bias.data.fill_(0)
 
-    def forward(self, avg_features, semantic_features, h_sent) -> object:
+    def forward(self, avg_features, semantic_features, h_sent):
+        if self.version == 'v1':
+            return self.v1(avg_features, semantic_features, h_sent)
+        elif self.version == 'v2':
+            return self.v2(avg_features, semantic_features, h_sent)
+
+    def v1(self, avg_features, semantic_features, h_sent) -> object:
         """
         only training
         :rtype: object
@@ -139,7 +151,27 @@ class CoAttention(nn.Module):
 
         ctx = self.bn_fc(self.W_fc(torch.cat([v_att, a_att], dim=1)))
 
-        return ctx, v_att, a_att
+        return ctx, alpha_v, alpha_a
+
+    def v2(self, avg_features, semantic_features, h_sent) -> object:
+        """
+        no bn
+        :rtype: object
+        """
+        W_v = self.W_v(avg_features)
+        W_v_h = self.W_v_h(h_sent.squeeze(1))
+
+        alpha_v = self.softmax(self.W_v_att(self.tanh(W_v + W_v_h)))
+        v_att = torch.mul(alpha_v, avg_features)
+
+        W_a_h = self.W_a_h(h_sent)
+        W_a = self.W_a(semantic_features)
+        alpha_a = self.softmax(self.W_a_att(self.tanh(torch.add(W_a_h, W_a))))
+        a_att = torch.mul(alpha_a, semantic_features).sum(1)
+
+        ctx = self.W_fc(torch.cat([v_att, a_att], dim=1))
+
+        return ctx, alpha_v, alpha_a
 
 
 class SentenceLSTM(nn.Module):
@@ -219,6 +251,8 @@ class SentenceLSTM(nn.Module):
             return self.v1(ctx, prev_hidden_state, states)
         elif self.version == 'v2':
             return self.v2(ctx, prev_hidden_state, states)
+        elif self.version == 'v3':
+            return self.v3(ctx, prev_hidden_state, states)
 
     def v1(self, ctx, prev_hidden_state, states=None):
         """
@@ -232,8 +266,8 @@ class SentenceLSTM(nn.Module):
         hidden_state, states = self.lstm(ctx, states)
         topic = self.bn_topic(self.W_topic(self.sigmoid(self.bn_t_h(self.W_t_h(hidden_state))
                                                         + self.bn_t_ctx(self.W_t_ctx(ctx)))))
-        p_stop = self.bn_stop(self.W_stop(self.sigmoid(self.bn_stop_s_1(self.W_stop_s_1(prev_hidden_state))
-                                                       + self.bn_stop_s(self.W_stop_s(hidden_state)))))
+        p_stop = self.W_stop(self.sigmoid(self.bn_stop_s_1(self.W_stop_s_1(prev_hidden_state))
+                                          + self.bn_stop_s(self.W_stop_s(hidden_state))))
         return topic, p_stop, hidden_state, states
 
     def v2(self, ctx, prev_hidden_state, states=None):
@@ -247,6 +281,17 @@ class SentenceLSTM(nn.Module):
                                                                  + self.W_t_ctx(ctx)))))
         p_stop = self.bn_stop(self.W_stop(self.tanh(self.bn_stop_s(self.W_stop_s_1(prev_hidden_state)
                                                                    + self.W_stop_s(hidden_state)))))
+        return topic, p_stop, hidden_state, states
+
+    def v3(self, ctx, prev_hidden_state, states=None):
+        """
+        v3
+        :rtype: object
+        """
+        ctx = ctx.unsqueeze(1)
+        hidden_state, states = self.lstm(ctx, states)
+        topic = self.W_topic(self.tanh(self.W_t_h(hidden_state) + self.W_t_ctx(ctx)))
+        p_stop = self.W_stop(self.tanh(self.W_stop_s_1(prev_hidden_state) + self.W_stop_s(hidden_state)))
         return topic, p_stop, hidden_state, states
 
 
@@ -279,7 +324,7 @@ class WordLSTM(nn.Module):
 
     def sample(self, features, start_tokens):
         sampled_ids = np.zeros((np.shape(features)[0], self.n_max))
-        sampled_ids[:, 0] = start_tokens.view(-1,)
+        sampled_ids[:, 0] = start_tokens.view(-1, )
         predicted = start_tokens
         embeddings = features
         embeddings = embeddings
@@ -297,38 +342,67 @@ class WordLSTM(nn.Module):
 
 
 if __name__ == '__main__':
+    import torchvision.transforms as transforms
+    from PIL import Image
+
     import warnings
+
     warnings.filterwarnings("ignore")
-    images = torch.randn((4, 3, 224, 224))
-    captions = torch.ones((4, 10)).long()
-    hidden_state = torch.randn((4, 1, 512))
 
-    print("images:{}".format(images.shape))
-    print("captions:{}".format(captions.shape))
-    print("hidden_states:{}".format(hidden_state.shape))
-
-    extractor = VisualFeatureExtractor()
-    visual_features, avg_features = extractor.forward(images)
-
-    print("visual_features:{}".format(visual_features.shape))
-    print("avg features:{}".format(avg_features.shape))
-
+    extractor = VisualFeatureExtractor(model_name='resnet152')
     mlc = MLC(fc_in_features=extractor.out_features)
-    tags, semantic_features = mlc.forward(avg_features)
-    print("tags:{}".format(tags.shape))
-    print("semantic_features:{}".format(semantic_features.shape))
-
     co_att = CoAttention(visual_size=extractor.out_features)
-    ctx, v_att, a_att = co_att.forward(avg_features, semantic_features, hidden_state)
-    print("ctx:{}".format(ctx.shape))
-    print("v_att:{}".format(v_att.shape))
-    print("a_att:{}".format(a_att.shape))
-
     sent_lstm = SentenceLSTM()
-    topic, p_stop, hidden_state, states = sent_lstm.forward(ctx, hidden_state)
-    print("Topic:{}".format(topic.shape))
-    print("P_STOP:{}".format(p_stop.shape))
-
     word_lstm = WordLSTM(embed_size=512, hidden_size=512, vocab_size=100, num_layers=1)
-    words = word_lstm.forward(topic, captions)
-    print("words:{}".format(words.shape))
+
+    # images = torch.randn((4, 3, 224, 224))
+    # captions = torch.ones((4, 10)).long()
+    # hidden_state = torch.randn((4, 1, 512))
+    #
+    # # image_file = '../data/images/CXR2814_IM-1239-1001.png'
+    # # images = Image.open(image_file).convert('RGB')
+    # # captions = torch.ones((1, 10)).long()
+    # # hidden_state = torch.randn((10, 1, 512))
+    # #
+    # # norm = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+    # #
+    # # transform = transforms.Compose([
+    # #     transforms.Resize(256),
+    # #     transforms.TenCrop(224),
+    # #     transforms.Lambda(lambda crops: torch.stack([norm(transforms.ToTensor()(crop)) for crop in crops])),
+    # # ])
+    # #
+    # # images = transform(images)
+    # # images.unsqueeze_(0)
+    #
+    # # bs, ncrops, c, h, w = images.size()
+    # # images = images.view(-1, c, h, w)
+    #
+    # print("images:{}".format(images.shape))
+    # print("captions:{}".format(captions.shape))
+    # print("hidden_states:{}".format(hidden_state.shape))
+    #
+    # visual_features, avg_features = extractor.forward(images)
+    #
+    # print("visual_features:{}".format(visual_features.shape))
+    # print("avg features:{}".format(avg_features.shape))
+    #
+    # tags, semantic_features = mlc.forward(avg_features)
+    #
+    # print("tags:{}".format(tags.shape))
+    # print("semantic_features:{}".format(semantic_features.shape))
+    #
+    # ctx, alpht_v, alpht_a = co_att.forward(avg_features, semantic_features, hidden_state)
+    # print("ctx:{}".format(ctx.shape))
+    # print("alpht_v:{}".format(alpht_v.shape))
+    # print("alpht_a:{}".format(alpht_a.shape))
+    #
+    # topic, p_stop, hidden_state, states = sent_lstm.forward(ctx, hidden_state)
+    # # p_stop_avg = p_stop.view(bs, ncrops, -1).mean(1)
+    #
+    # print("Topic:{}".format(topic.shape))
+    # print("P_STOP:{}".format(p_stop.shape))
+    # # print("P_stop_avg:{}".format(p_stop_avg.shape))
+    #
+    # words = word_lstm.forward(topic, captions)
+    # print("words:{}".format(words.shape))

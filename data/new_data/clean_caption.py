@@ -26,6 +26,6 @@ if __name__ == '__main__':
             .replace('<num><num>', '<num>').replace('<num><num>', '<num>')
         captions[key] = caption
 
-    with open('./new_data/captions.json', 'w') as f:
-        json.dump(captions, f)
-    print(captions)
+    # with open('./new_data/captions.json', 'w') as f:
+    #     json.dump(captions, f)
+    # print(captions)

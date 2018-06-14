@@ -46,7 +46,10 @@ class ChestXrayDataSet(Dataset):
         label = self.labels[index]
         if self.transform is not None:
             image = self.transform(image)
-        text = self.caption[image_name]
+        try:
+            text = self.caption[image_name]
+        except Exception as err:
+            text = 'normal. '
 
         target = list()
         max_word_num = 0

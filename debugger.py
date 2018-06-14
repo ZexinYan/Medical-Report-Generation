@@ -28,12 +28,13 @@ class DebuggerBase:
         self._init_model_path()
         self.model_dir = self._init_model_dir()
         self.writer = self._init_writer()
-        self.transform = self._init_transform()
+        self.train_transform = self._init_train_transform()
+        self.val_transform = self._init_val_transform()
         self.vocab = self._init_vocab()
         self.model_state_dict = self._load_mode_state_dict()
 
-        self.train_data_loader = self._init_data_loader(self.args.train_file_list)
-        self.val_data_loader = self._init_data_loader(self.args.val_file_list)
+        self.train_data_loader = self._init_data_loader(self.args.train_file_list, self.train_transform)
+        self.val_data_loader = self._init_data_loader(self.args.val_file_list, self.val_transform)
 
         self.extractor = self._init_visual_extractor()
         self.mlc = self._init_mlc()
@@ -84,11 +85,19 @@ class DebuggerBase:
     def _epoch_val(self):
         raise NotImplementedError
 
-    def _init_transform(self):
+    def _init_train_transform(self):
         transform = transforms.Compose([
             transforms.Resize(self.args.resize),
             transforms.RandomCrop(self.args.crop_size),
-            transforms.RandomHorizontalFlip(),
+            # transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406),
+                                 (0.229, 0.224, 0.225))])
+        return transform
+
+    def _init_val_transform(self):
+        transform = transforms.Compose([
+            transforms.Resize((self.args.crop_size, self.args.crop_size)),
             transforms.ToTensor(),
             transforms.Normalize((0.485, 0.456, 0.406),
                                  (0.229, 0.224, 0.225))])
@@ -153,7 +162,8 @@ class DebuggerBase:
         return model
 
     def _init_co_attention(self):
-        model = CoAttention(embed_size=self.args.embed_size,
+        model = CoAttention(version=self.args.attention_version,
+                            embed_size=self.args.embed_size,
                             hidden_size=self.args.hidden_size,
                             visual_size=self.extractor.out_features,
                             k=self.args.k,
@@ -172,12 +182,12 @@ class DebuggerBase:
     def _init_word_model(self):
         raise NotImplementedError
 
-    def _init_data_loader(self, file_list):
+    def _init_data_loader(self, file_list, transform):
         data_loader = get_loader(image_dir=self.args.image_dir,
                                  caption_json=self.args.caption_json,
                                  file_list=file_list,
                                  vocabulary=self.vocab,
-                                 transform=self.transform,
+                                 transform=transform,
                                  batch_size=self.args.batch_size,
                                  s_max=self.args.s_max,
                                  n_max=self.args.n_max,
@@ -266,7 +276,7 @@ class DebuggerBase:
                         'sentence_model': self.sentence_model.state_dict(),
                         'word_model': self.word_model.state_dict(),
                         'optimizer': self.optimizer.state_dict(),
-                        ' ': epoch_id},
+                        'epoch': epoch_id},
                        os.path.join(self.model_dir, "{}".format(_filename)))
 
         if val_loss < self.min_val_loss:
@@ -319,11 +329,17 @@ class LSTMDebugger(DebuggerBase):
 
                 batch_stop_loss += self.ce_criterion(p_stop.squeeze(), prob_real[:, sentence_index]).sum()
 
+                # print("p_stop:{}".format(p_stop.squeeze()))
+                # print("prob_real:{}".format(prob_real[:, sentence_index]))
+
                 for word_index in range(1, captions.shape[2]):
                     words = self.word_model.forward(topic, context[:, sentence_index, :word_index])
                     word_mask = (context[:, sentence_index, word_index] > 0).float()
                     batch_word_loss += (self.ce_criterion(words, context[:, sentence_index, word_index])
                                         * word_mask).sum()
+                    # batch_word_loss += (self.ce_criterion(words, context[:, sentence_index, word_index])).sum()
+                    # print("words:{}".format(torch.max(words, 1)[1]))
+                    # print("real:{}".format(context[:, sentence_index, word_index]))
 
             batch_loss = self.args.lambda_tag * batch_tag_loss \
                          + self.args.lambda_stop * batch_stop_loss \
@@ -374,6 +390,8 @@ class LSTMDebugger(DebuggerBase):
                 topic, p_stop, hidden_states, sentence_states = self.sentence_model.forward(ctx,
                                                                                             prev_hidden_states,
                                                                                             sentence_states)
+                print("p_stop:{}".format(p_stop.squeeze()))
+                print("prob_real:{}".format(prob_real[:, sentence_index]))
 
                 batch_stop_loss += self.ce_criterion(p_stop.squeeze(), prob_real[:, sentence_index]).sum()
 
@@ -382,6 +400,8 @@ class LSTMDebugger(DebuggerBase):
                     word_mask = (context[:, sentence_index, word_index] > 0).float()
                     batch_word_loss += (self.ce_criterion(words, context[:, sentence_index, word_index])
                                         * word_mask).sum()
+                    print("words:{}".format(torch.max(words, 1)[1]))
+                    print("real:{}".format(context[:, sentence_index, word_index]))
 
             batch_loss = self.args.lambda_tag * batch_tag_loss \
                          + self.args.lambda_stop * batch_stop_loss \
@@ -395,7 +415,7 @@ class LSTMDebugger(DebuggerBase):
         return tag_loss, stop_loss, word_loss, loss
 
     def _init_sentence_model(self):
-        model = SentenceLSTM(version=self.args.version,
+        model = SentenceLSTM(version=self.args.sent_version,
                              embed_size=self.args.embed_size,
                              hidden_size=self.args.hidden_size,
                              num_layers=self.args.sentence_num_layers,
@@ -443,12 +463,12 @@ if __name__ == '__main__':
                         help='the path for images')
     parser.add_argument('--caption_json', type=str, default='./data/new_data/captions.json',
                         help='path for captions')
-    parser.add_argument('--train_file_list', type=str, default='./data/new_data/debugging_data.txt',
+    parser.add_argument('--train_file_list', type=str, default='./data/new_data/train_data.txt',
                         help='the train array')
-    parser.add_argument('--val_file_list', type=str, default='./data/new_data/debugging_data.txt',
+    parser.add_argument('--val_file_list', type=str, default='./data/new_data/val_data.txt',
                         help='the val array')
     # transforms argument
-    parser.add_argument('--resize', type=int, default=256,
+    parser.add_argument('--resize', type=int, default=224,
                         help='size for resizing images')
     parser.add_argument('--crop_size', type=int, default=224,
                         help='size for randomly cropping images')
@@ -457,7 +477,7 @@ if __name__ == '__main__':
                         help='path for saving trained models')
     parser.add_argument('--load_model_path', type=str, default='.',
                         help='The path of loaded model')
-    parser.add_argument('--saved_model_name', type=str, default='debug_v1_new_data',
+    parser.add_argument('--saved_model_name', type=str, default='debugging',
                         help='The name of saved model')
 
     """
@@ -465,7 +485,7 @@ if __name__ == '__main__':
     """
     parser.add_argument('--momentum', type=int, default=0.1)
     # VisualFeatureExtractor
-    parser.add_argument('--visual_model_name', type=str, default='densenet201',
+    parser.add_argument('--visual_model_name', type=str, default='resnet152',
                         help='CNN model name')
     parser.add_argument('--pretrained', action='store_true', default=True,
                         help='not using pretrained model when training')
@@ -476,13 +496,14 @@ if __name__ == '__main__':
     parser.add_argument('--k', type=int, default=10)
 
     # Co-Attention
+    parser.add_argument('--attention_version', type=str, default='v1')
     parser.add_argument('--embed_size', type=int, default=512)
     parser.add_argument('--hidden_size', type=int, default=512)
 
     # Sentence Model
-    parser.add_argument('--version', type=str, default='v1')
+    parser.add_argument('--sent_version', type=str, default='v1')
     parser.add_argument('--sentence_num_layers', type=int, default=2)
-    parser.add_argument('--dropout', type=float, default=0.3)
+    parser.add_argument('--dropout', type=float, default=0)
 
     # Word Model
     parser.add_argument('--word_num_layers', type=int, default=1)
@@ -492,9 +513,9 @@ if __name__ == '__main__':
     """
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--learning_rate', type=int, default=0.001)
-    parser.add_argument('--epochs', type=int, default=1000)
+    parser.add_argument('--epochs', type=int, default=100)
 
-    parser.add_argument('--clip', type=float, default=0.35,
+    parser.add_argument('--clip', type=float, default=-1,
                         help='gradient clip, -1 means no clip (default: 0.35)')
     parser.add_argument('--s_max', type=int, default=6)
     parser.add_argument('--n_max', type=int, default=30)
