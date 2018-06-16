@@ -178,6 +178,13 @@ optional arguments:
 
 By using jupyter to read `review_captions.ipynb`, you can review the model generated captions for each image.
 
+## visualize training procedure
+By changing `tensorboard --logdir report_models`  to your owned saved models path in tensorboard.sh, you can visualize training procedure.
+
+```
+./tensorboard.sh
+```
+
 ## Improve performance by change the model
 In `utils/models`, I have implemented all models in basic version, and I think there will be some more powerful model structures which can improve the performance. So enjoy your work `^_^`.
 
