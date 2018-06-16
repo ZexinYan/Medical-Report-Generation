@@ -46,6 +46,12 @@ class CaptionSampler(object):
     def test(self):
         tag_loss, stop_loss, word_loss, loss = 0, 0, 0, 0
 
+        self.extractor.eval()
+        self.mlc.eval()
+        self.co_attention.eval()
+        self.sentence_model.eval()
+        self.word_model.eval()
+
         for i, (images, _, label, captions, prob) in enumerate(self.data_loader):
             batch_tag_loss, batch_stop_loss, batch_word_loss, batch_loss = 0, 0, 0, 0
             images = self.__to_var(images, requires_grad=False)
@@ -90,6 +96,12 @@ class CaptionSampler(object):
         return tag_loss, stop_loss, word_loss, loss
 
     def generate(self):
+        self.extractor.eval()
+        self.mlc.eval()
+        self.co_attention.eval()
+        self.sentence_model.eval()
+        self.word_model.eval()
+
         progress_bar = tqdm(self.data_loader, desc='Generating')
         results = {}
 
@@ -195,24 +207,26 @@ class CaptionSampler(object):
         return '. '.join(pred_sentences)
 
     def __init_cam_path(self, image_file):
-        if not os.path.exists(self.args.generate_dir):
-            os.makedirs(self.args.generate_dir)
+        generate_dir = os.path.join(self.args.model_dir, self.args.generate_dir)
+        if not os.path.exists(generate_dir):
+            os.makedirs(generate_dir)
 
-        image_dir = os.path.join(self.args.generate_dir, image_file)
+        image_dir = os.path.join(generate_dir, image_file)
 
         if not os.path.exists(image_dir):
             os.makedirs(image_dir)
         return image_dir
 
     def __save_json(self, result):
-        if not os.path.exists(self.args.result_path):
-            os.makedirs(self.args.result_path)
-        with open(os.path.join(self.args.result_path, '{}.json'.format(self.args.result_name)), 'w') as f:
+        result_path = os.path.join(self.args.model_dir, self.args.result_path)
+        if not os.path.exists(result_path):
+            os.makedirs(result_path)
+        with open(os.path.join(result_path, '{}.json'.format(self.args.result_name)), 'w') as f:
             json.dump(result, f)
 
     def __load_mode_state_dict(self):
         try:
-            model_state_dict = torch.load(self.args.load_model_path)
+            model_state_dict = torch.load(os.path.join(self.args.model_dir, self.args.load_model_path))
             print("[Load Model-{} Succeed!]".format(self.args.load_model_path))
             print("Load From Epoch {}".format(model_state_dict['epoch']))
             return model_state_dict
@@ -248,7 +262,7 @@ class CaptionSampler(object):
                                  batch_size=self.args.batch_size,
                                  s_max=self.args.s_max,
                                  n_max=self.args.n_max,
-                                 shuffle=True)
+                                 shuffle=False)
         return data_loader
 
     def __init_transform(self):
@@ -275,7 +289,6 @@ class CaptionSampler(object):
         if self.args.cuda:
             model = model.cuda()
 
-        model.eval()
         return model
 
     def __init_mlc(self):
@@ -291,11 +304,11 @@ class CaptionSampler(object):
         if self.args.cuda:
             model = model.cuda()
 
-        model.eval()
         return model
 
     def __init_co_attention(self):
-        model = CoAttention(embed_size=self.args.embed_size,
+        model = CoAttention(version=self.args.attention_version,
+                            embed_size=self.args.embed_size,
                             hidden_size=self.args.hidden_size,
                             visual_size=self.extractor.out_features,
                             k=self.args.k,
@@ -308,11 +321,10 @@ class CaptionSampler(object):
         if self.args.cuda:
             model = model.cuda()
 
-        model.eval()
         return model
 
     def __init_sentence_model(self):
-        model = SentenceLSTM(version=self.args.version,
+        model = SentenceLSTM(version=self.args.sent_version,
                              embed_size=self.args.embed_size,
                              hidden_size=self.args.hidden_size,
                              num_layers=self.args.sentence_num_layers,
@@ -326,7 +338,6 @@ class CaptionSampler(object):
         if self.args.cuda:
             model = model.cuda()
 
-        model.eval()
         return model
 
     def __init_word_word(self):
@@ -343,14 +354,12 @@ class CaptionSampler(object):
         if self.args.cuda:
             model = model.cuda()
 
-        model.eval()
         return model
 
 
 if __name__ == '__main__':
     import warnings
     warnings.filterwarnings("ignore")
-    model_dir = './report_models/debug_v1_new_data/20180612-08:06'
 
     parser = argparse.ArgumentParser()
 
@@ -358,15 +367,16 @@ if __name__ == '__main__':
     Data Argument
     """
     # Path Argument
+    parser.add_argument('--model_dir', type=str, default='./report_models/debugging/20180614-11:08')
     parser.add_argument('--image_dir', type=str, default='./data/images',
                         help='the path for images')
-    parser.add_argument('--caption_json', type=str, default='./data/new_data/captions.json',
+    parser.add_argument('--caption_json', type=str, default='./data/new_data/debugging_captions.json',
                         help='path for captions')
-    parser.add_argument('--vocab_path', type=str, default='./data/new_data/vocab.pkl',
+    parser.add_argument('--vocab_path', type=str, default='./data/new_data/debugging_vocab.pkl',
                         help='the path for vocabulary object')
     parser.add_argument('--file_lits', type=str, default='./data/new_data/debugging_data.txt',
                         help='the path for test file list')
-    parser.add_argument('--load_model_path', type=str, default=os.path.join(model_dir, 'val_best_loss.pth.tar'),
+    parser.add_argument('--load_model_path', type=str, default='val_best_loss.pth.tar',
                         help='The path of loaded model')
 
     # transforms argument
@@ -375,10 +385,10 @@ if __name__ == '__main__':
 
     # CAM
     parser.add_argument('--cam_size', type=int, default=224)
-    parser.add_argument('--generate_dir', type=str, default=os.path.join(model_dir, 'cam'))
+    parser.add_argument('--generate_dir', type=str, default='cam')
 
     # Saved result
-    parser.add_argument('--result_path', type=str, default=os.path.join(model_dir, 'results'),
+    parser.add_argument('--result_path', type=str, default='results',
                         help='the path for storing results')
     parser.add_argument('--result_name', type=str, default='debugging',
                         help='the name of results')
@@ -388,7 +398,7 @@ if __name__ == '__main__':
     """
     parser.add_argument('--momentum', type=int, default=0.1)
     # VisualFeatureExtractor
-    parser.add_argument('--visual_model_name', type=str, default='densenet201',
+    parser.add_argument('--visual_model_name', type=str, default='resnet152',
                         help='CNN model name')
     parser.add_argument('--pretrained', action='store_true', default=False,
                         help='not using pretrained model when training')
@@ -399,13 +409,14 @@ if __name__ == '__main__':
     parser.add_argument('--k', type=int, default=10)
 
     # Co-Attention
+    parser.add_argument('--attention_version', type=str, default='v1')
     parser.add_argument('--embed_size', type=int, default=512)
     parser.add_argument('--hidden_size', type=int, default=512)
 
     # Sentence Model
-    parser.add_argument('--version', type=str, default='v1')
+    parser.add_argument('--sent_version', type=str, default='v1')
     parser.add_argument('--sentence_num_layers', type=int, default=2)
-    parser.add_argument('--dropout', type=float, default=0.3)
+    parser.add_argument('--dropout', type=float, default=0.1)
 
     # Word Model
     parser.add_argument('--word_num_layers', type=int, default=1)
@@ -413,10 +424,10 @@ if __name__ == '__main__':
     """
     Generating Argument
     """
-    parser.add_argument('--s_max', type=int, default=6)
+    parser.add_argument('--s_max', type=int, default=2)
     parser.add_argument('--n_max', type=int, default=30)
 
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--batch_size', type=int, default=4)
 
     # Loss function
     parser.add_argument('--lambda_tag', type=float, default=10000)
@@ -438,5 +449,5 @@ if __name__ == '__main__':
 
     sampler.generate()
 
-    sentences = sampler.sample('CXR1000_IM-0003-1001.png')
-    print(sentences)
+    # sentences = sampler.sample('CXR1000_IM-0003-1001.png')
+    # print(sentences)

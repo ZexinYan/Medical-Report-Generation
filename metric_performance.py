@@ -1,6 +1,7 @@
 from pycocoevalcap.eval import calculate_metrics
 import numpy as np
 import json
+import argparse
 
 
 def create_dataset(array):
@@ -19,8 +20,15 @@ def load_json(json_file):
         data = json.load(f)
     return data
 
+
 if __name__ == '__main__':
-    test = load_json('./report_models/debug_v1_new_data/20180612-08:06/results/debugging.json')
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--result_path', type=str,
+                        default='./report_models/debugging/20180614-11:08/results/debugging.json')
+    args = parser.parse_args()
+
+    test = load_json(args.result_path)
     datasetGTS = {'annotations': []}
     datasetRES = {'annotations': []}
 
@@ -46,4 +54,5 @@ if __name__ == '__main__':
         })
 
     rng = range(len(test))
-    print calculate_metrics(rng, datasetGTS, datasetRES)
+    print
+    calculate_metrics(rng, datasetGTS, datasetRES)
