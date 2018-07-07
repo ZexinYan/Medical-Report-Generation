@@ -25,7 +25,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--result_path', type=str,
-                        default='./report_models/debugging/20180614-11:08/results/debugging.json')
+                        default='./results/clean_test.json')
     args = parser.parse_args()
 
     test = load_json(args.result_path)
@@ -54,5 +54,4 @@ if __name__ == '__main__':
         })
 
     rng = range(len(test))
-    print
-    calculate_metrics(rng, datasetGTS, datasetRES)
+    print calculate_metrics(rng, datasetGTS, datasetRES)

@@ -19,11 +19,16 @@ class DebuggerBase:
     def __init__(self, args):
         self.args = args
         self.min_val_loss = 10000000000
-        self.min_tag_loss = 1000000
-        self.min_stop_loss = 1000000
-        self.min_word_loss = 10000000
+        self.min_val_tag_loss = 1000000
+        self.min_val_stop_loss = 1000000
+        self.min_val_word_loss = 10000000
 
         self.min_train_loss = 10000000000
+        self.min_train_tag_loss = 1000000
+        self.min_train_stop_loss = 1000000
+        self.min_train_word_loss = 10000000
+
+        self.params = None
 
         self._init_model_path()
         self.model_dir = self._init_model_dir()
@@ -67,6 +72,9 @@ class DebuggerBase:
                                                                                self.optimizer.param_groups[0]['lr']))
             self._save_model(epoch_id,
                              val_loss,
+                             val_tag_loss,
+                             val_stop_loss,
+                             val_word_loss,
                              train_loss)
             self._log(train_tags_loss=train_tag_loss,
                       train_stop_loss=train_stop_loss,
@@ -140,8 +148,21 @@ class DebuggerBase:
         model = VisualFeatureExtractor(model_name=self.args.visual_model_name,
                                        pretrained=self.args.pretrained)
 
-        if self.model_state_dict is not None:
-            model.load_state_dict(self.model_state_dict['extractor'])
+        try:
+            model_state = torch.load(self.args.load_visual_model_path)
+            model.load_state_dict(model_state['model'])
+            self.writer.write("[Load Visual Extractor Succeed!]\n")
+        except Exception as err:
+            self.writer.write("[Load Model Failed] {}\n".format(err))
+
+        if not self.args.visual_trained:
+            for i, param in enumerate(model.parameters()):
+                param.requires_grad = False
+        else:
+            if self.params:
+                self.params += list(model.parameters())
+            else:
+                self.params = list(model.parameters())
 
         if self.args.cuda:
             model = model.cuda()
@@ -154,8 +175,21 @@ class DebuggerBase:
                     fc_in_features=self.extractor.out_features,
                     k=self.args.k)
 
-        if self.model_state_dict is not None:
-            model.load_state_dict(self.model_state_dict['mlc'])
+        try:
+            model_state = torch.load(self.args.load_mlc_model_path)
+            model.load_state_dict(model_state['model'])
+            self.writer.write("[Load MLC Succeed!]\n")
+        except Exception as err:
+            self.writer.write("[Load MLC Failed {}!]\n".format(err))
+
+        if not self.args.mlc_trained:
+            for i, param in enumerate(model.parameters()):
+                param.requires_grad = False
+        else:
+            if self.params:
+                self.params += list(model.parameters())
+            else:
+                self.params = list(model.parameters())
 
         if self.args.cuda:
             model = model.cuda()
@@ -169,8 +203,21 @@ class DebuggerBase:
                             k=self.args.k,
                             momentum=self.args.momentum)
 
-        if self.model_state_dict is not None:
-            model.load_state_dict(self.model_state_dict['co_attention'])
+        try:
+            model_state = torch.load(self.args.load_co_model_path)
+            model.load_state_dict(model_state['model'])
+            self.writer.write("[Load Co-attention Succeed!]\n")
+        except Exception as err:
+            self.writer.write("[Load Co-attention Failed {}!]\n".format(err))
+
+        if not self.args.co_trained:
+            for i, param in enumerate(model.parameters()):
+                param.requires_grad = False
+        else:
+            if self.params:
+                self.params += list(model.parameters())
+            else:
+                self.params = list(model.parameters())
 
         if self.args.cuda:
             model = model.cuda()
@@ -203,12 +250,7 @@ class DebuggerBase:
         return nn.MSELoss()
 
     def _init_optimizer(self):
-        params = list(self.extractor.parameters()) + \
-                 list(self.mlc.parameters()) + \
-                 list(self.co_attention.parameters()) + \
-                 list(self.word_model.parameters()) + \
-                 list(self.sentence_model.parameters())
-        return torch.optim.Adam(params=params, lr=self.args.learning_rate)
+        return torch.optim.Adam(params=self.params, lr=self.args.learning_rate)
 
     def _log(self,
              train_tags_loss,
@@ -267,8 +309,14 @@ class DebuggerBase:
         if not os.path.exists(self.args.log_path):
             os.makedirs(self.args.log_path)
 
-    def _save_model(self, epoch_id, val_loss, train_loss):
-        def save_model(_filename):
+    def _save_model(self,
+                    epoch_id,
+                    val_loss,
+                    val_tag_loss,
+                    val_stop_loss,
+                    val_word_loss,
+                    train_loss):
+        def save_whole_model(_filename):
             self.writer.write("Saved Model in {}\n".format(_filename))
             torch.save({'extractor': self.extractor.state_dict(),
                         'mlc': self.mlc.state_dict(),
@@ -279,15 +327,33 @@ class DebuggerBase:
                         'epoch': epoch_id},
                        os.path.join(self.model_dir, "{}".format(_filename)))
 
+        def save_part_model(_filename, value):
+            self.writer.write("Saved Model in {}\n".format(_filename))
+            torch.save({"model": value},
+                       os.path.join(self.model_dir, "{}".format(_filename)))
+
         if val_loss < self.min_val_loss:
             file_name = "val_best_loss.pth.tar"
-            save_model(file_name)
+            save_whole_model(file_name)
             self.min_val_loss = val_loss
 
         if train_loss < self.min_train_loss:
             file_name = "train_best_loss.pth.tar"
-            save_model(file_name)
+            save_whole_model(file_name)
             self.min_train_loss = train_loss
+
+        # if val_tag_loss < self.min_val_tag_loss:
+        #     save_part_model("extractor.pth.tar", self.extractor.state_dict())
+        #     save_part_model("mlc.pth.tar", self.mlc.state_dict())
+        #     self.min_val_tag_loss = val_tag_loss
+        #
+        # if val_stop_loss < self.min_val_stop_loss:
+        #     save_part_model("sentence.pth.tar", self.sentence_model.state_dict())
+        #     self.min_val_stop_loss = val_stop_loss
+        #
+        # if val_word_loss < self.min_val_word_loss:
+        #     save_part_model("word.pth.tar", self.word_model.state_dict())
+        #     self.min_val_word_loss = val_word_loss
 
 
 class LSTMDebugger(DebuggerBase):
@@ -320,8 +386,8 @@ class LSTMDebugger(DebuggerBase):
 
             for sentence_index in range(captions.shape[1]):
                 ctx, _, _ = self.co_attention.forward(avg_features,
-                                                       semantic_features,
-                                                       prev_hidden_states)
+                                                      semantic_features,
+                                                      prev_hidden_states)
 
                 topic, p_stop, hidden_states, sentence_states = self.sentence_model.forward(ctx,
                                                                                             prev_hidden_states,
@@ -336,7 +402,7 @@ class LSTMDebugger(DebuggerBase):
                     words = self.word_model.forward(topic, context[:, sentence_index, :word_index])
                     word_mask = (context[:, sentence_index, word_index] > 0).float()
                     batch_word_loss += (self.ce_criterion(words, context[:, sentence_index, word_index])
-                                        * word_mask).sum()
+                                        * word_mask).sum() * (0.9 ** word_index)
                     # batch_word_loss += (self.ce_criterion(words, context[:, sentence_index, word_index])).sum()
                     # print("words:{}".format(torch.max(words, 1)[1]))
                     # print("real:{}".format(context[:, sentence_index, word_index]))
@@ -361,56 +427,56 @@ class LSTMDebugger(DebuggerBase):
 
     def _epoch_val(self):
         tag_loss, stop_loss, word_loss, loss = 0, 0, 0, 0
-        self.extractor.eval()
-        self.mlc.eval()
-        self.co_attention.eval()
-        self.sentence_model.eval()
-        self.word_model.eval()
-
-        for i, (images, _, label, captions, prob) in enumerate(self.val_data_loader):
-            batch_tag_loss, batch_stop_loss, batch_word_loss, batch_loss = 0, 0, 0, 0
-            images = self._to_var(images, requires_grad=False)
-
-            visual_features, avg_features = self.extractor.forward(images)
-            tags, semantic_features = self.mlc.forward(avg_features)
-
-            batch_tag_loss = self.mse_criterion(tags, self._to_var(label, requires_grad=False)).sum()
-
-            sentence_states = None
-            prev_hidden_states = self._to_var(torch.zeros(images.shape[0], 1, self.args.hidden_size))
-
-            context = self._to_var(torch.Tensor(captions).long(), requires_grad=False)
-            prob_real = self._to_var(torch.Tensor(prob).long(), requires_grad=False)
-
-            for sentence_index in range(captions.shape[1]):
-                ctx, v_att, a_att = self.co_attention.forward(avg_features,
-                                                       semantic_features,
-                                                       prev_hidden_states)
-
-                topic, p_stop, hidden_states, sentence_states = self.sentence_model.forward(ctx,
-                                                                                            prev_hidden_states,
-                                                                                            sentence_states)
-                print("p_stop:{}".format(p_stop.squeeze()))
-                print("prob_real:{}".format(prob_real[:, sentence_index]))
-
-                batch_stop_loss += self.ce_criterion(p_stop.squeeze(), prob_real[:, sentence_index]).sum()
-
-                for word_index in range(1, captions.shape[2]):
-                    words = self.word_model.forward(topic, context[:, sentence_index, :word_index])
-                    word_mask = (context[:, sentence_index, word_index] > 0).float()
-                    batch_word_loss += (self.ce_criterion(words, context[:, sentence_index, word_index])
-                                        * word_mask).sum()
-                    print("words:{}".format(torch.max(words, 1)[1]))
-                    print("real:{}".format(context[:, sentence_index, word_index]))
-
-            batch_loss = self.args.lambda_tag * batch_tag_loss \
-                         + self.args.lambda_stop * batch_stop_loss \
-                         + self.args.lambda_word * batch_word_loss
-
-            tag_loss += self.args.lambda_tag * batch_tag_loss.data
-            stop_loss += self.args.lambda_stop * batch_stop_loss.data
-            word_loss += self.args.lambda_word * batch_word_loss.data
-            loss += batch_loss.data
+        # self.extractor.eval()
+        # self.mlc.eval()
+        # self.co_attention.eval()
+        # self.sentence_model.eval()
+        # self.word_model.eval()
+        #
+        # for i, (images, _, label, captions, prob) in enumerate(self.val_data_loader):
+        #     batch_tag_loss, batch_stop_loss, batch_word_loss, batch_loss = 0, 0, 0, 0
+        #     images = self._to_var(images, requires_grad=False)
+        #
+        #     visual_features, avg_features = self.extractor.forward(images)
+        #     tags, semantic_features = self.mlc.forward(avg_features)
+        #
+        #     batch_tag_loss = self.mse_criterion(tags, self._to_var(label, requires_grad=False)).sum()
+        #
+        #     sentence_states = None
+        #     prev_hidden_states = self._to_var(torch.zeros(images.shape[0], 1, self.args.hidden_size))
+        #
+        #     context = self._to_var(torch.Tensor(captions).long(), requires_grad=False)
+        #     prob_real = self._to_var(torch.Tensor(prob).long(), requires_grad=False)
+        #
+        #     for sentence_index in range(captions.shape[1]):
+        #         ctx, v_att, a_att = self.co_attention.forward(avg_features,
+        #                                                       semantic_features,
+        #                                                       prev_hidden_states)
+        #
+        #         topic, p_stop, hidden_states, sentence_states = self.sentence_model.forward(ctx,
+        #                                                                                     prev_hidden_states,
+        #                                                                                     sentence_states)
+        #         print("p_stop:{}".format(p_stop.squeeze()))
+        #         print("prob_real:{}".format(prob_real[:, sentence_index]))
+        #
+        #         batch_stop_loss += self.ce_criterion(p_stop.squeeze(), prob_real[:, sentence_index]).sum()
+        #
+        #         for word_index in range(1, captions.shape[2]):
+        #             words = self.word_model.forward(topic, context[:, sentence_index, :word_index])
+        #             word_mask = (context[:, sentence_index, word_index] > 0).float()
+        #             batch_word_loss += (self.ce_criterion(words, context[:, sentence_index, word_index])
+        #                                 * word_mask).sum()
+        #             print("words:{}".format(torch.max(words, 1)[1]))
+        #             print("real:{}".format(context[:, sentence_index, word_index]))
+        #
+        #     batch_loss = self.args.lambda_tag * batch_tag_loss \
+        #                  + self.args.lambda_stop * batch_stop_loss \
+        #                  + self.args.lambda_word * batch_word_loss
+        #
+        #     tag_loss += self.args.lambda_tag * batch_tag_loss.data
+        #     stop_loss += self.args.lambda_stop * batch_stop_loss.data
+        #     word_loss += self.args.lambda_word * batch_word_loss.data
+        #     loss += batch_loss.data
 
         return tag_loss, stop_loss, word_loss, loss
 
@@ -422,8 +488,21 @@ class LSTMDebugger(DebuggerBase):
                              dropout=self.args.dropout,
                              momentum=self.args.momentum)
 
-        if self.model_state_dict is not None:
-            model.load_state_dict(self.model_state_dict['sentence_model'])
+        try:
+            model_state = torch.load(self.args.load_sentence_model_path)
+            model.load_state_dict(model_state['model'])
+            self.writer.write("[Load Sentence Model Succeed!\n")
+        except Exception as err:
+            self.writer.write("[Load Sentence model Failed {}!]\n".format(err))
+
+        if not self.args.sentence_trained:
+            for i, param in enumerate(model.parameters()):
+                param.requires_grad = False
+        else:
+            if self.params:
+                self.params += list(model.parameters())
+            else:
+                self.params = list(model.parameters())
 
         if self.args.cuda:
             model = model.cuda()
@@ -436,8 +515,21 @@ class LSTMDebugger(DebuggerBase):
                          num_layers=self.args.word_num_layers,
                          n_max=self.args.n_max)
 
-        if self.model_state_dict is not None:
-            model.load_state_dict(self.model_state_dict['word_model'])
+        try:
+            model_state = torch.load(self.args.load_word_model_path)
+            model.load_state_dict(model_state['model'])
+            self.writer.write("[Load Word Model Succeed!\n")
+        except Exception as err:
+            self.writer.write("[Load Word model Failed {}!]\n".format(err))
+
+        if not self.args.word_trained:
+            for i, param in enumerate(model.parameters()):
+                param.requires_grad = False
+        else:
+            if self.params:
+                self.params += list(model.parameters())
+            else:
+                self.params = list(model.parameters())
 
         if self.args.cuda:
             model = model.cuda()
@@ -453,7 +545,7 @@ if __name__ == '__main__':
     """
     Data Argument
     """
-    parser.add_argument('--patience', type=int, default=30)
+    parser.add_argument('--patience', type=int, default=50)
     parser.add_argument('--mode', type=str, default='train')
 
     # Path Argument
@@ -468,16 +560,16 @@ if __name__ == '__main__':
     parser.add_argument('--val_file_list', type=str, default='./data/new_data/val_data.txt',
                         help='the val array')
     # transforms argument
-    parser.add_argument('--resize', type=int, default=224,
+    parser.add_argument('--resize', type=int, default=256,
                         help='size for resizing images')
     parser.add_argument('--crop_size', type=int, default=224,
                         help='size for randomly cropping images')
     # Load/Save model argument
-    parser.add_argument('--model_path', type=str, default='./report_models/',
+    parser.add_argument('--model_path', type=str, default='./report_v4_models/',
                         help='path for saving trained models')
-    parser.add_argument('--load_model_path', type=str, default='.',
+    parser.add_argument('--load_model_path', type=str, default='',
                         help='The path of loaded model')
-    parser.add_argument('--saved_model_name', type=str, default='training',
+    parser.add_argument('--saved_model_name', type=str, default='v4',
                         help='The name of saved model')
 
     """
@@ -489,31 +581,46 @@ if __name__ == '__main__':
                         help='CNN model name')
     parser.add_argument('--pretrained', action='store_true', default=True,
                         help='not using pretrained model when training')
+    parser.add_argument('--load_visual_model_path', type=str,
+                        default='.')
+    parser.add_argument('--visual_trained', action='store_true', default=True,
+                        help='Whether train visual extractor or not')
 
     # MLC
     parser.add_argument('--classes', type=int, default=210)
     parser.add_argument('--sementic_features_dim', type=int, default=512)
     parser.add_argument('--k', type=int, default=10)
+    parser.add_argument('--load_mlc_model_path', type=str,
+                        default='.')
+    parser.add_argument('--mlc_trained', action='store_true', default=True)
 
     # Co-Attention
-    parser.add_argument('--attention_version', type=str, default='v1')
+    parser.add_argument('--attention_version', type=str, default='v4')
     parser.add_argument('--embed_size', type=int, default=512)
     parser.add_argument('--hidden_size', type=int, default=512)
+    parser.add_argument('--load_co_model_path', type=str, default='.')
+    parser.add_argument('--co_trained', action='store_true', default=True)
 
     # Sentence Model
     parser.add_argument('--sent_version', type=str, default='v1')
     parser.add_argument('--sentence_num_layers', type=int, default=2)
     parser.add_argument('--dropout', type=float, default=0)
+    parser.add_argument('--load_sentence_model_path', type=str,
+                        default='.')
+    parser.add_argument('--sentence_trained', action='store_true', default=True)
 
     # Word Model
     parser.add_argument('--word_num_layers', type=int, default=1)
+    parser.add_argument('--load_word_model_path', type=str,
+                        default='.')
+    parser.add_argument('--word_trained', action='store_true', default=True)
 
     """
     Training Argument
     """
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--learning_rate', type=int, default=0.001)
-    parser.add_argument('--epochs', type=int, default=100)
+    parser.add_argument('--epochs', type=int, default=1000)
 
     parser.add_argument('--clip', type=float, default=-1,
                         help='gradient clip, -1 means no clip (default: 0.35)')

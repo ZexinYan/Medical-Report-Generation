@@ -45,12 +45,11 @@ class CaptionSampler(object):
 
     def test(self):
         tag_loss, stop_loss, word_loss, loss = 0, 0, 0, 0
-
-        self.extractor.eval()
-        self.mlc.eval()
-        self.co_attention.eval()
-        self.sentence_model.eval()
-        self.word_model.eval()
+        # self.extractor.eval()
+        # self.mlc.eval()
+        # self.co_attention.eval()
+        # self.sentence_model.eval()
+        # self.word_model.eval()
 
         for i, (images, _, label, captions, prob) in enumerate(self.data_loader):
             batch_tag_loss, batch_stop_loss, batch_word_loss, batch_loss = 0, 0, 0, 0
@@ -97,10 +96,10 @@ class CaptionSampler(object):
 
     def generate(self):
         self.extractor.eval()
-        self.mlc.eval()
-        self.co_attention.eval()
-        self.sentence_model.eval()
-        self.word_model.eval()
+        # self.mlc.eval()
+        # self.co_attention.eval()
+        # self.sentence_model.eval()
+        # self.word_model.eval()
 
         progress_bar = tqdm(self.data_loader, desc='Generating')
         results = {}
@@ -119,7 +118,7 @@ class CaptionSampler(object):
                 real_sentences[i] = {}
 
             for i in range(self.args.s_max):
-                ctx, v_att, a_att = self.co_attention.forward(avg_features, semantic_features, prev_hidden_states)
+                ctx, alpha_v, alpha_a = self.co_attention.forward(avg_features, semantic_features, prev_hidden_states)
 
                 topic, p_stop, hidden_state, sentence_states = self.sentence_model.forward(ctx,
                                                                                           prev_hidden_states,
@@ -134,6 +133,8 @@ class CaptionSampler(object):
                 sampled_ids = self.word_model.sample(topic, start_tokens)
                 prev_hidden_states = hidden_state
                 sampled_ids = sampled_ids * p_stop
+
+                # self._generate_cam(image_id, visual_features, alpha_v, i)
 
                 for id, array in zip(image_id, sampled_ids):
                     pred_sentences[id][i] = self.__vec2sent(array.cpu().detach().numpy())
@@ -152,59 +153,84 @@ class CaptionSampler(object):
 
         self.__save_json(results)
 
-    def sample(self, image_file):
+    # def sample(self, image_file):
+    #     self.extractor.eval()
+    #     self.mlc.eval()
+    #     self.co_attention.eval()
+    #     self.sentence_model.eval()
+    #     self.word_model.eval()
+    #
+    #     cam_dir = self.__init_cam_path(image_file)
+    #     image_file = os.path.join(self.args.image_dir, image_file)
+    #
+    #     imageData = Image.open(image_file).convert('RGB')
+    #     imageData = self.transform(imageData)
+    #     imageData = imageData.unsqueeze_(0)
+    #
+    #     image = self.__to_var(imageData, requires_grad=False)
+    #
+    #     visual_features, avg_features = self.extractor.forward(image)
+    #     avg_features.unsqueeze_(0)
+    #
+    #     tags, semantic_features = self.mlc(avg_features)
+    #     sentence_states = None
+    #     prev_hidden_states = self.__to_var(torch.zeros(1, 1, self.args.hidden_size))
+    #
+    #     pred_sentences = []
+    #
+    #     for i in range(self.args.s_max):
+    #         ctx, alpha_v, alpha_a = self.co_attention.forward(avg_features, semantic_features, prev_hidden_states)
+    #         topic, p_stop, hidden_state, sentence_states = self.sentence_model.forward(ctx,
+    #                                                                                    prev_hidden_states,
+    #                                                                                    sentence_states)
+    #         p_stop = p_stop.squeeze(1)
+    #         p_stop = torch.max(p_stop, 1)[1].unsqueeze(1)
+    #
+    #         start_tokens = np.zeros((topic.shape[0], 1))
+    #         start_tokens[:, 0] = self.vocab('<start>')
+    #         start_tokens = self.__to_var(torch.Tensor(start_tokens).long(), requires_grad=False)
+    #
+    #         sampled_ids = self.word_model.sample(topic, start_tokens)
+    #         prev_hidden_states = hidden_state
+    #         sampled_ids = sampled_ids * p_stop
+    #
+    #         pred_sentences.append(self.__vec2sent(sampled_ids.cpu().detach().numpy()[0]))
+    #
+    #         cam = torch.mul(visual_features, alpht_v.view(alpht_v.shape[0], alpht_v.shape[1], 1, 1)).sum(1)
+    #         cam.squeeze_()
+    #
+    #         cam = cam.cpu().data.numpy()
+    #         cam = cam / np.sum(cam)
+    #         cam = cv2.resize(cam, (self.args.cam_size, self.args.cam_size))
+    #         cam = cv2.applyColorMap(np.uint8(255 * cam), cv2.COLORMAP_JET)
+    #
+    #         imgOriginal = cv2.imread(image_file, 1)
+    #         imgOriginal = cv2.resize(imgOriginal, (self.args.cam_size, self.args.cam_size))
+    #
+    #         img = cam * 0.5 + imgOriginal
+    #         cv2.imwrite(os.path.join(cam_dir, '{}.png'.format(i)), img)
+    #
+    #     return '. '.join(pred_sentences)
 
-        cam_dir = self.__init_cam_path(image_file)
-        image_file = os.path.join(self.args.image_dir, image_file)
+    def _generate_cam(self, images_id, visual_features, alpha_v, sentence_id):
+        alpha_v *= 100
+        cam = torch.mul(visual_features, alpha_v.view(alpha_v.shape[0], alpha_v.shape[1], 1, 1)).sum(1)
+        cam.squeeze_()
+        cam = cam.cpu().data.numpy()
+        for i in range(cam.shape[0]):
+            image_id = images_id[i]
+            cam_dir = self.__init_cam_path(images_id[i])
 
-        imageData = Image.open(image_file).convert('RGB')
-        imageData = self.transform(imageData)
-        imageData = imageData.unsqueeze_(0)
+            org_img = cv2.imread(os.path.join(self.args.image_dir, image_id), 1)
+            org_img = cv2.resize(org_img, (self.args.cam_size, self.args.cam_size))
 
-        image = self.__to_var(imageData, requires_grad=False)
+            heatmap = cam[i]
+            heatmap = heatmap / np.max(heatmap)
+            heatmap = cv2.resize(heatmap, (self.args.cam_size, self.args.cam_size))
+            heatmap = cv2.applyColorMap(np.uint8(255 * heatmap), cv2.COLORMAP_JET)
 
-        visual_features, avg_features = self.extractor.forward(image)
-        avg_features.unsqueeze_(0)
-
-        tags, semantic_features = self.mlc(avg_features)
-        sentence_states = None
-        prev_hidden_states = self.__to_var(torch.zeros(1, 1, self.args.hidden_size))
-
-        pred_sentences = []
-
-        for i in range(self.args.s_max):
-            ctx, alpht_v, alpht_a = self.co_attention.forward(avg_features, semantic_features, prev_hidden_states)
-            topic, p_stop, hidden_state, sentence_states = self.sentence_model.forward(ctx,
-                                                                                       prev_hidden_states,
-                                                                                       sentence_states)
-            p_stop = p_stop.squeeze(1)
-            p_stop = torch.max(p_stop, 1)[1].unsqueeze(1)
-
-            start_tokens = np.zeros((topic.shape[0], 1))
-            start_tokens[:, 0] = self.vocab('<start>')
-            start_tokens = self.__to_var(torch.Tensor(start_tokens).long(), requires_grad=False)
-
-            sampled_ids = self.word_model.sample(topic, start_tokens)
-            prev_hidden_states = hidden_state
-            sampled_ids = sampled_ids * p_stop
-
-            pred_sentences.append(self.__vec2sent(sampled_ids.cpu().detach().numpy()[0]))
-
-            cam = torch.mul(visual_features, alpht_v.view(alpht_v.shape[0], alpht_v.shape[1], 1, 1)).sum(1)
-            cam.squeeze_()
-
-            cam = cam.cpu().data.numpy()
-            cam = cam / np.sum(cam)
-            cam = cv2.resize(cam, (self.args.cam_size, self.args.cam_size))
-            cam = cv2.applyColorMap(np.uint8(255 * cam), cv2.COLORMAP_JET)
-
-            imgOriginal = cv2.imread(image_file, 1)
-            imgOriginal = cv2.resize(imgOriginal, (self.args.cam_size, self.args.cam_size))
-
-            img = cam * 0.5 + imgOriginal
-            cv2.imwrite(os.path.join(cam_dir, '{}.png'.format(i)), img)
-
-        return '. '.join(pred_sentences)
+            img = heatmap * 0.5 + org_img
+            cv2.imwrite(os.path.join(cam_dir, '{}.png'.format(sentence_id)), img)
 
     def __init_cam_path(self, image_file):
         generate_dir = os.path.join(self.args.model_dir, self.args.generate_dir)
@@ -243,7 +269,7 @@ class CaptionSampler(object):
             word = self.vocab.get_word_by_id(word_id)
             if word == '<start>':
                 continue
-            if word == '<end>' or word == '':
+            if word == '<end>' or word == '<pad>':
                 break
             sampled_caption.append(word)
         return ' '.join(sampled_caption)
@@ -367,16 +393,16 @@ if __name__ == '__main__':
     Data Argument
     """
     # Path Argument
-    parser.add_argument('--model_dir', type=str, default='./report_models/debugging/20180614-11:08')
+    parser.add_argument('--model_dir', type=str, default='./debug_models/v4_v3_no_bn/20180628-05:44')
     parser.add_argument('--image_dir', type=str, default='./data/images',
                         help='the path for images')
     parser.add_argument('--caption_json', type=str, default='./data/new_data/debugging_captions.json',
                         help='path for captions')
-    parser.add_argument('--vocab_path', type=str, default='./data/new_data/debugging_vocab.pkl',
+    parser.add_argument('--vocab_path', type=str, default='./data/new_data/debug_vocab.pkl',
                         help='the path for vocabulary object')
     parser.add_argument('--file_lits', type=str, default='./data/new_data/debugging_data.txt',
                         help='the path for test file list')
-    parser.add_argument('--load_model_path', type=str, default='val_best_loss.pth.tar',
+    parser.add_argument('--load_model_path', type=str, default='train_best_loss.pth.tar',
                         help='The path of loaded model')
 
     # transforms argument
@@ -390,7 +416,7 @@ if __name__ == '__main__':
     # Saved result
     parser.add_argument('--result_path', type=str, default='results',
                         help='the path for storing results')
-    parser.add_argument('--result_name', type=str, default='debugging',
+    parser.add_argument('--result_name', type=str, default='debug',
                         help='the name of results')
 
     """
@@ -398,7 +424,7 @@ if __name__ == '__main__':
     """
     parser.add_argument('--momentum', type=int, default=0.1)
     # VisualFeatureExtractor
-    parser.add_argument('--visual_model_name', type=str, default='resnet152',
+    parser.add_argument('--visual_model_name', type=str, default='densenet201',
                         help='CNN model name')
     parser.add_argument('--pretrained', action='store_true', default=False,
                         help='not using pretrained model when training')
@@ -424,10 +450,10 @@ if __name__ == '__main__':
     """
     Generating Argument
     """
-    parser.add_argument('--s_max', type=int, default=2)
+    parser.add_argument('--s_max', type=int, default=6)
     parser.add_argument('--n_max', type=int, default=30)
 
-    parser.add_argument('--batch_size', type=int, default=4)
+    parser.add_argument('--batch_size', type=int, default=8)
 
     # Loss function
     parser.add_argument('--lambda_tag', type=float, default=10000)
@@ -440,14 +466,11 @@ if __name__ == '__main__':
     print(args)
 
     sampler = CaptionSampler(args)
-    tag_loss, stop_loss, word_loss, loss = sampler.test()
-
-    print("tag loss:{}".format(tag_loss))
-    print("stop loss:{}".format(stop_loss))
-    print("word loss:{}".format(word_loss))
-    print("loss:{}".format(loss))
+    # tag_loss, stop_loss, word_loss, loss = sampler.test()
+    #
+    # print("tag loss:{}".format(tag_loss))
+    # print("stop loss:{}".format(stop_loss))
+    # print("word loss:{}".format(word_loss))
+    # print("loss:{}".format(loss))
 
     sampler.generate()
-
-    # sentences = sampler.sample('CXR1000_IM-0003-1001.png')
-    # print(sentences)
